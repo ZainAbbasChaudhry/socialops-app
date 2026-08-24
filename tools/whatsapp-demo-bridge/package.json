@@ -1,0 +1,18 @@
+{
+  "name": "easylife-whatsapp-demo-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Isolated, deletable local demo bridge: WhatsApp Web QR session + simple RAG + AI reply. NOT the production WhatsApp Cloud API integration - see README.md.",
+  "type": "commonjs",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "whatsapp-web.js": "^1.26.0",
+    "qrcode": "^1.5.4",
+    "express": "^4.21.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7"
+  }
+}

@@ -56,3 +56,10 @@ credentials*.json
 
 # archives / stray build artifacts
 *.zip
+
+# WhatsApp QR demo bridge (tools/whatsapp-demo-bridge/) - isolated, local-only
+# demo tool. Never commit session data, browser profiles, or conversation logs.
+tools/whatsapp-demo-bridge/.wwebjs_auth/
+tools/whatsapp-demo-bridge/.wwebjs_cache/
+tools/whatsapp-demo-bridge/node_modules/
+tools/whatsapp-demo-bridge/*.log

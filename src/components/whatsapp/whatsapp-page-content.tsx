@@ -3,6 +3,7 @@
 import { MessageCircle, Target } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ConnectionCard } from "@/components/whatsapp/connection-card"
+import { QrDemoConnectionCard } from "@/components/whatsapp/qr-demo-connection-card"
 import { QrLinkCard } from "@/components/whatsapp/qr-link-card"
 import { ChatbotDemo } from "@/components/whatsapp/chatbot-demo"
 import { LeadInboxList } from "@/components/whatsapp/lead-inbox-list"
@@ -63,6 +64,7 @@ export function WhatsAppPageContent() {
           <TabsList className="max-w-full overflow-x-auto">
             <TabsTrigger value="connection">Connection</TabsTrigger>
             <TabsTrigger value="live">Live Conversations</TabsTrigger>
+            <TabsTrigger value="qr-demo">QR Demo</TabsTrigger>
           </TabsList>
 
           <TabsContent value="connection" className="pt-4">
@@ -71,6 +73,10 @@ export function WhatsAppPageContent() {
 
           <TabsContent value="live" className="pt-4">
             <LiveConversationsList />
+          </TabsContent>
+
+          <TabsContent value="qr-demo" className="pt-4">
+            <QrDemoConnectionCard />
           </TabsContent>
         </Tabs>
       ) : (

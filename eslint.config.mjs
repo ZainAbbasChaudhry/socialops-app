@@ -29,6 +29,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Isolated local demo tool - its own package.json/CommonJS Node
+    // service, not part of this app's TS/lint surface. See its README.
+    "tools/whatsapp-demo-bridge/**",
   ]),
 ]);
 
