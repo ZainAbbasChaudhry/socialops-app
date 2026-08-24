@@ -13,13 +13,26 @@ wait for.
 
 ## What it does
 
-A small local Node service:
+A small local Node service, currently configured for **MeriteShop / Merit
+Cables**, chatbot identity **"Pluggy"** (`DEMO_CLIENT=meriteshop`):
 1. Opens a WhatsApp Web session (via a headless browser) and exposes its QR
    code to the dashboard.
 2. Once you scan it with a phone, listens for inbound text messages.
-3. Answers using a small keyword-based knowledge-base lookup
-   (`demo-knowledge/*.md`) + an AI provider (Gemini or local Ollama).
-4. Tracks a simple, rule-based lead score per conversation.
+3. For product/price questions, looks up the **structured, synced product
+   catalog** (`data/meriteshop-products.json`) first - real current prices,
+   never numbers frozen in the system prompt. Falls back to a small
+   keyword-based knowledge-base lookup (`demo-knowledge/meriteshop/*.md`) for
+   everything else (offices, policies, FAQs, etc).
+4. Generates the reply via an AI provider (Gemini or local Ollama) as
+   **Pluggy** - the customer never sees "EasyLife" (the platform behind it).
+5. Tracks a simple, rule-based MeriteShop purchase-lead score per
+   conversation.
+
+The bridge is single-tenant (one WhatsApp session = one client at a time).
+The previous EasyLife-branded demo knowledge is preserved under
+`demo-knowledge/easylife/` - switch back by setting `DEMO_CLIENT=easylife`
+in `.env` (note: the structured product-catalog lookup is MeriteShop-
+specific and won't apply to a different client without its own catalog).
 
 ## Setup (run this on the Mac doing the demo)
 
@@ -27,6 +40,7 @@ A small local Node service:
 cd tools/whatsapp-demo-bridge
 npm install
 cp .env.example .env
+npm run sync:meriteshop   # pulls the live current MeriteShop catalog - run this before every demo
 ```
 
 Edit `.env`:
@@ -44,8 +58,24 @@ Start it:
 npm start
 ```
 
-You should see it print the AI provider, model, knowledge-chunk count, and
-start listening on `http://localhost:4001` (or whatever `PORT` you set).
+You should see it print the client workspace/brand/assistant identity, AI
+provider, model, knowledge-chunk count, product-catalog count + last sync
+time, and start listening on `http://localhost:4001` (or whatever `PORT` you
+set).
+
+## Refreshing the catalog before a demo
+
+```bash
+npm run sync:meriteshop
+```
+
+Fetches the live public MeriteShop product catalog (Shopify's own
+`products.json` storefront feed - no admin/private API access, no customer
+or order data) and writes `data/meriteshop-products.json`. Safe by design: a
+failed sync (network down, site change) always leaves the last good
+snapshot in place and prints an honest error - it never silently wipes data
+before a demo. The bridge re-reads this file automatically (no restart
+needed) whenever it changes.
 
 ## Run the dashboard alongside it
 

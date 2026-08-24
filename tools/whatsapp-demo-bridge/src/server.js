@@ -5,6 +5,8 @@ const { WhatsAppBridge } = require("./whatsapp-client")
 const { createMessageHandler } = require("./message-handler")
 const memory = require("./conversation-memory")
 const { reloadKnowledge, getChunks } = require("./rag/retrieval")
+const { loadCatalog } = require("./rag/product-catalog")
+const { getActiveClientProfile } = require("./client-profile")
 const ollama = require("./ai/ollama")
 
 const app = express()
@@ -45,12 +47,16 @@ app.get("/demo-state", (_req, res) => {
 })
 
 app.get("/settings", (_req, res) => {
+  const catalog = loadCatalog()
   res.json({
+    client: getActiveClientProfile(),
     aiProvider: config.aiProvider,
     ollamaModel: config.aiProvider === "ollama" ? config.ollamaModel : null,
     autoReply: config.autoReply,
     allowedNumbersConfigured: config.allowedNumbers.length > 0,
     knowledgeChunks: getChunks().length,
+    productsSynced: catalog.products.length,
+    lastCatalogSync: catalog.syncedAt,
   })
 })
 
@@ -70,9 +76,13 @@ app.get("/ollama-models", async (_req, res) => {
 })
 
 app.listen(config.port, () => {
+  const profile = getActiveClientProfile()
+  const catalog = loadCatalog()
   console.log(`\n[whatsapp-bridge] EasyLife WhatsApp Demo Bridge listening on http://localhost:${config.port}`)
+  console.log(`[whatsapp-bridge] Client workspace: ${profile.workspace} (${profile.brand}) - assistant identity: ${profile.assistantName}`)
   console.log(`[whatsapp-bridge] AI provider: ${config.aiProvider}${config.aiProvider === "ollama" ? ` (model: ${config.ollamaModel})` : ""}`)
   console.log(`[whatsapp-bridge] Knowledge chunks loaded: ${getChunks().length}`)
+  console.log(`[whatsapp-bridge] Product catalog: ${catalog.products.length} products${catalog.syncedAt ? `, last synced ${catalog.syncedAt}` : " (not synced yet - run npm run sync:meriteshop)"}`)
   console.log(`[whatsapp-bridge] Auto-reply: ${config.autoReply ? "ON" : "OFF (observe-only)"}`)
   console.log(`[whatsapp-bridge] Allowed numbers: ${config.allowedNumbers.length > 0 ? config.allowedNumbers.join(", ") : "(any - not restricted)"}\n`)
 

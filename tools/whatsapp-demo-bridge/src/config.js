@@ -18,6 +18,11 @@ const config = {
   // Runtime-toggleable (via POST /settings) - the env var only supplies the
   // starting value, since env vars can't be hot-reloaded from the dashboard.
   autoReply: process.env.DEMO_WHATSAPP_AUTO_REPLY !== "false",
+  // Which client workspace this bridge instance is currently demoing -
+  // selects demo-knowledge/<client>/ and (for meriteshop) the structured
+  // product catalog. The bridge is single-tenant at a time (one WhatsApp
+  // session); switching clients means changing this and restarting.
+  client: process.env.DEMO_CLIENT || "meriteshop",
 }
 
 module.exports = config

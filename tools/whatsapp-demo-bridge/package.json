@@ -6,7 +6,8 @@
   "type": "commonjs",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "sync:meriteshop": "node scripts/sync-meriteshop.js"
   },
   "dependencies": {
     "whatsapp-web.js": "^1.26.0",

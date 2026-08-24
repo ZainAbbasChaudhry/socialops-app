@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Loader2, RefreshCw, Unplug, TriangleAlert, CircleCheck, MessageCircle, Bot } from "lucide-react"
+import { Loader2, RefreshCw, Unplug, TriangleAlert, CircleCheck, MessageCircle, Bot, Package, Clock } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { StatusBadge } from "@/components/dashboard/status-badge"
@@ -15,6 +15,11 @@ import { LeadScoreBadge } from "@/components/leads/lead-score-badge"
  * same machine (see that folder's README) - this card degrades to an
  * honest "bridge not reachable" state otherwise, it never fakes a
  * connection.
+ *
+ * The bridge is single-tenant (one WhatsApp session = one client
+ * workspace at a time, currently MeriteShop/Merit Cables/"Pluggy" - see
+ * the bridge's src/client-profile.js). This card shows whichever client
+ * identity the bridge itself reports, rather than hardcoding one here.
  */
 const BRIDGE_URL = process.env.NEXT_PUBLIC_WHATSAPP_BRIDGE_URL || "http://localhost:4001"
 
@@ -34,6 +39,17 @@ interface ConversationSummary {
   leadStatus: string
   lastInboundText: string | null
   lastReplyText: string | null
+  qualification?: { productInterest?: string | null; city?: string | null; requiredQuantity?: string | null }
+}
+
+interface BridgeSettings {
+  client: { workspace: string; brand: string; assistantName: string }
+  aiProvider: "gemini" | "ollama"
+  ollamaModel: string | null
+  autoReply: boolean
+  knowledgeChunks: number
+  productsSynced: number
+  lastCatalogSync: string | null
 }
 
 const STATUS_LABEL: Record<BridgeStatus, string> = {
@@ -45,11 +61,16 @@ const STATUS_LABEL: Record<BridgeStatus, string> = {
   error: "Error",
 }
 
+function formatSyncTime(iso: string | null) {
+  if (!iso) return "Never synced"
+  return new Date(iso).toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short" })
+}
+
 export function QrDemoConnectionCard() {
   const [bridgeReachable, setBridgeReachable] = React.useState<boolean | null>(null)
   const [state, setState] = React.useState<BridgeState | null>(null)
   const [conversation, setConversation] = React.useState<ConversationSummary | null>(null)
-  const [autoReply, setAutoReply] = React.useState(true)
+  const [settings, setSettings] = React.useState<BridgeSettings | null>(null)
   const [busy, setBusy] = React.useState(false)
 
   // Defined inside the effect (not a component-level useCallback called
@@ -72,7 +93,7 @@ export function QrDemoConnectionCard() {
         if (cancelled) return
         setState(statusData)
         setConversation(demoData?.conversation ?? null)
-        setAutoReply(Boolean(settingsData?.autoReply))
+        setSettings(settingsData)
         setBridgeReachable(true)
       } catch {
         if (!cancelled) setBridgeReachable(false)
@@ -95,12 +116,9 @@ export function QrDemoConnectionCard() {
         fetch(`${BRIDGE_URL}/demo-state`),
         fetch(`${BRIDGE_URL}/settings`),
       ])
-      const statusData = await statusRes.json()
-      const demoData = await demoRes.json()
-      const settingsData = await settingsRes.json()
-      setState(statusData)
-      setConversation(demoData?.conversation ?? null)
-      setAutoReply(Boolean(settingsData?.autoReply))
+      setState(await statusRes.json())
+      setConversation((await demoRes.json())?.conversation ?? null)
+      setSettings(await settingsRes.json())
       setBridgeReachable(true)
     } catch {
       setBridgeReachable(false)
@@ -132,8 +150,9 @@ export function QrDemoConnectionCard() {
   }
 
   async function toggleAutoReply() {
-    const next = !autoReply
-    setAutoReply(next)
+    if (!settings) return
+    const next = !settings.autoReply
+    setSettings({ ...settings, autoReply: next })
     try {
       await fetch(`${BRIDGE_URL}/settings`, {
         method: "POST",
@@ -145,16 +164,19 @@ export function QrDemoConnectionCard() {
     }
   }
 
+  const client = settings?.client
+
   return (
     <Card className="gap-4 px-5 py-5">
       <div className="flex items-start justify-between gap-3">
         <div className="flex flex-col gap-0.5">
           <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-            QR Demo Connection
+            {client ? `${client.workspace} — ${client.brand}` : "QR Demo Connection"}
             <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-medium text-warning-foreground dark:text-warning">DEMO</span>
           </span>
           <span className="text-xs text-muted-foreground">
-            Demo connection — production deployments use the official WhatsApp Business integration.
+            {client ? `${client.assistantName} — WhatsApp RAG Assistant` : "QR Demo Connection"} — production deployments use the official WhatsApp
+            Business integration.
           </span>
         </div>
         {state && (
@@ -179,6 +201,35 @@ export function QrDemoConnectionCard() {
         </div>
       ) : (
         <>
+          {settings && (
+            <div className="grid grid-cols-2 gap-2 rounded-xl bg-muted/40 p-3 text-xs sm:grid-cols-4">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-muted-foreground">AI</span>
+                <span className="font-medium text-foreground">
+                  {settings.aiProvider === "ollama" ? `Ollama (${settings.ollamaModel})` : "Gemini"}
+                </span>
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <span className="text-muted-foreground">Knowledge Base</span>
+                <span className="font-medium text-foreground">{settings.knowledgeChunks > 0 ? "Ready" : "Empty"}</span>
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <span className="flex items-center gap-1 text-muted-foreground">
+                  <Package className="size-3" />
+                  Products Synced
+                </span>
+                <span className="font-medium text-foreground">{settings.productsSynced}</span>
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <span className="flex items-center gap-1 text-muted-foreground">
+                  <Clock className="size-3" />
+                  Last Catalog Sync
+                </span>
+                <span className="font-medium text-foreground">{formatSyncTime(settings.lastCatalogSync)}</span>
+              </div>
+            </div>
+          )}
+
           {state?.status === "qr_required" && state.qrDataUrl && (
             <div className="flex flex-col items-center gap-2 rounded-xl bg-muted/40 p-4">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -214,7 +265,7 @@ export function QrDemoConnectionCard() {
             </Button>
             <Button type="button" size="sm" variant="ghost" className="text-muted-foreground" onClick={toggleAutoReply}>
               <Bot className="size-3.5" />
-              Auto-reply: {autoReply ? "On" : "Off"}
+              Auto-reply: {settings?.autoReply ? "On" : "Off"}
             </Button>
           </div>
 
@@ -235,8 +286,14 @@ export function QrDemoConnectionCard() {
               )}
               {conversation.lastReplyText && (
                 <div className="flex flex-col gap-0.5">
-                  <span className="text-[11px] text-muted-foreground">Last AI reply</span>
+                  <span className="text-[11px] text-muted-foreground">Last {client?.assistantName ?? "AI"} reply</span>
                   <p className="line-clamp-2 text-xs text-foreground">{conversation.lastReplyText}</p>
+                </div>
+              )}
+              {conversation.qualification?.productInterest && (
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="text-muted-foreground">Product interest</span>
+                  <span className="font-medium text-foreground">{conversation.qualification.productInterest}</span>
                 </div>
               )}
               <span className="text-[11px] text-muted-foreground">Status: {conversation.leadStatus}</span>
