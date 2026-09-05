@@ -3,7 +3,8 @@ import type { ProviderId } from "./providers"
 import { resolveCredentialValue, type TestConnectionResult } from "./service"
 import { getConnection } from "./repository"
 import { testWhatsAppCredentials } from "./whatsapp/cloud-api"
-import { testOpenWaGateway } from "./whatsapp/openwa-client"
+import { testGateway } from "./whatsapp/openwa-client"
+import { getWorkspaceFeatures } from "./whatsapp/feature-access"
 import { testOmniDimensionCredentials } from "./omnidimension/client"
 import { listFacebookPages } from "./facebook/client"
 import { getLinkedInstagramAccount } from "./instagram/client"
@@ -55,7 +56,9 @@ export async function testProviderConnection(workspaceId: string, provider: Prov
       }
       // Health probe only - deliberately never sends a WhatsApp message and
       // never disturbs a live pairing, so testing is free and safe to repeat.
-      return testOpenWaGateway({ baseUrl, apiKey })
+      // The health probe is a platform capability that is on by default, so
+      // Test Connection works before any client feature has been configured.
+      return testGateway({ baseUrl, apiKey, features: await getWorkspaceFeatures(workspaceId) })
     }
 
     case "omnidimension": {

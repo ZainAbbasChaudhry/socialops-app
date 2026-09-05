@@ -3,6 +3,7 @@
 import { MessageCircle, Target } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ConnectionCard } from "@/components/whatsapp/connection-card"
+import { GatewayConnectionCard } from "@/components/whatsapp/gateway-connection-card"
 import { QrDemoConnectionCard } from "@/components/whatsapp/qr-demo-connection-card"
 import { QrLinkCard } from "@/components/whatsapp/qr-link-card"
 import { ChatbotDemo } from "@/components/whatsapp/chatbot-demo"
@@ -68,7 +69,14 @@ export function WhatsAppPageContent() {
           </TabsList>
 
           <TabsContent value="connection" className="pt-4">
-            <ConnectionCard />
+            <div className="flex flex-col gap-4">
+              {/* QR / pairing-code linking through EasyLife's own WhatsApp
+                  gateway - the path most clients use, since it needs no Meta
+                  Business verification. The Cloud API card stays below for
+                  workspaces on the official API. */}
+              <GatewayConnectionCard />
+              <ConnectionCard />
+            </div>
           </TabsContent>
 
           <TabsContent value="live" className="pt-4">
@@ -89,7 +97,14 @@ export function WhatsAppPageContent() {
           </TabsList>
 
           <TabsContent value="connection" className="pt-4">
-            <ConnectionCard />
+            <div className="flex flex-col gap-4">
+              {/* QR / pairing-code linking through EasyLife's own WhatsApp
+                  gateway - the path most clients use, since it needs no Meta
+                  Business verification. The Cloud API card stays below for
+                  workspaces on the official API. */}
+              <GatewayConnectionCard />
+              <ConnectionCard />
+            </div>
           </TabsContent>
 
           <TabsContent value="qr" className="pt-4">

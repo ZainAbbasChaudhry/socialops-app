@@ -184,6 +184,16 @@ export const whatsappAccounts = socialops.table("whatsapp_accounts", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 })
 
+export const workspaceWhatsappFeatures = socialops.table("workspace_whatsapp_features", {
+  workspaceId: uuid("workspace_id").primaryKey(),
+  /** Enabled capability keys from the WhatsApp feature catalogue. */
+  enabledKeys: text("enabled_keys").array().notNull().default([]),
+  engine: text("engine").notNull().default("baileys"),
+  updatedBy: uuid("updated_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+})
+
 export const whatsappConversations = socialops.table("whatsapp_conversations", {
   id: uuid("id").primaryKey(),
   workspaceId: uuid("workspace_id").notNull(),

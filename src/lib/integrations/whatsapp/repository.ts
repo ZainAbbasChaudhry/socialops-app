@@ -100,17 +100,21 @@ export async function getWhatsAppAccountById(workspaceId: string, accountId: str
 }
 
 /**
- * The OpenWA counterpart to `ensureWhatsAppAccount`. An OpenWA account is
- * keyed by its gateway session id, which is derived from the workspace id
- * (see transport.ts) - so this is genuinely one row per workspace, created
- * on first connect and reused forever after.
+ * The workspace's gateway-backed WhatsApp account. Keyed on
+ * (workspace, provider) rather than on the session id, because a workspace
+ * has exactly one such account and its session id is assigned BY the gateway
+ * - looking it up by an id EasyLife guessed meant a second row was created
+ * every time the gateway handed back a different one.
+ *
+ * `sessionId` stays null until the gateway assigns one; nothing may treat a
+ * null session as connected.
  */
-export async function ensureOpenWaAccount(workspaceId: string, sessionId: string, integrationConnectionId: string | null) {
+export async function ensureOpenWaAccount(workspaceId: string, integrationConnectionId: string | null) {
   return withDb(async (db) => {
     const existing = await db
       .select()
       .from(whatsappAccounts)
-      .where(and(eq(whatsappAccounts.workspaceId, workspaceId), eq(whatsappAccounts.sessionId, sessionId)))
+      .where(and(eq(whatsappAccounts.workspaceId, workspaceId), eq(whatsappAccounts.provider, "openwa")))
       .limit(1)
     if (existing[0]) return existing[0]
 
@@ -121,11 +125,24 @@ export async function ensureOpenWaAccount(workspaceId: string, sessionId: string
         workspaceId,
         integrationConnectionId,
         provider: "openwa",
-        sessionId,
+        sessionId: null,
         connectionStatus: "disconnected",
       })
       .returning()
     return created
+  })
+}
+
+/** Records the session id the gateway assigned, so inbound webhooks - which
+ * carry that id - route back to this workspace. */
+export async function setOpenWaSessionId(workspaceId: string, accountId: string, sessionId: string) {
+  return withDb(async (db) => {
+    const [updated] = await db
+      .update(whatsappAccounts)
+      .set({ sessionId, updatedAt: new Date() })
+      .where(and(eq(whatsappAccounts.id, accountId), eq(whatsappAccounts.workspaceId, workspaceId)))
+      .returning()
+    return updated ?? null
   })
 }
 

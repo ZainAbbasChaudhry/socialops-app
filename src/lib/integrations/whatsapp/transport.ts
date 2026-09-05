@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import { sendWhatsAppTextMessage } from "./cloud-api"
-import { sendOpenWaTextMessage, type OpenWaConfig } from "./openwa-client"
+import { sendTextMessage as sendGatewayText, type GatewayConfig } from "./openwa-client"
+import { getWorkspaceFeatures } from "./feature-access"
 import { getWhatsAppAccountById } from "./repository"
 import { resolveCredentialValue } from "@/lib/integrations/credential-resolution"
 import { getConnection } from "@/lib/integrations/repository"
@@ -66,16 +67,25 @@ export function deriveSessionId(workspaceId: string): string {
   return `ws_${createHash("sha256").update(`easylife:whatsapp:${workspaceId}`).digest("hex").slice(0, 32)}`
 }
 
+/** The NAME EasyLife gives a workspace's session on the gateway. The gateway
+ * assigns its own id, which is what `whatsapp_accounts.session_id` stores and
+ * what inbound webhooks carry; this deterministic name is how EasyLife finds
+ * (or creates) that session again without keeping a second mapping. */
+export const deriveSessionName = deriveSessionId
+
 /** Reads the workspace's OpenWA gateway configuration. Returns null when
  * the workspace has not activated the provider - callers must treat that
  * as "not available", never as a reason to fall back to another
  * workspace's gateway. */
-export async function resolveOpenWaConfig(workspaceId: string): Promise<OpenWaConfig | null> {
+export async function resolveOpenWaConfig(workspaceId: string): Promise<GatewayConfig | null> {
   const row = await getConnection(workspaceId, "openwa")
   const { value: baseUrl } = resolveCredentialValue(row, "baseUrl", "openwa")
   const { value: apiKey } = resolveCredentialValue(row, "apiKey", "openwa")
   if (!baseUrl || !apiKey) return null
-  return { baseUrl, apiKey }
+  // Entitlements are part of the config, so there is no way to construct a
+  // gateway client that bypasses the feature gate.
+  const features = await getWorkspaceFeatures(workspaceId)
+  return { baseUrl, apiKey, features }
 }
 
 function cloudApiTransport(phoneNumberId: string, accessToken: string): WhatsAppTransport {
@@ -85,10 +95,10 @@ function cloudApiTransport(phoneNumberId: string, accessToken: string): WhatsApp
   }
 }
 
-function openWaTransport(config: OpenWaConfig, sessionId: string): WhatsAppTransport {
+function openWaTransport(config: GatewayConfig, sessionId: string): WhatsAppTransport {
   return {
     provider: "openwa",
-    sendText: (to, body) => sendOpenWaTextMessage(config, sessionId, to, body),
+    sendText: (to, body) => sendGatewayText(config, sessionId, to, body),
   }
 }
 

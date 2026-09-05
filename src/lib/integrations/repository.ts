@@ -146,6 +146,11 @@ export type IntegrationAuditAction =
   | "integration_deleted"
   | "connection_test_succeeded"
   | "connection_test_failed"
+  /** An EasyLife platform operator changed which WhatsApp capabilities a
+   * workspace is entitled to. Recorded because it changes what the client
+   * can do, and "who turned bulk campaigns on for this client" is a question
+   * that gets asked after something goes wrong, not before. */
+  | "features_updated"
 
 /** Never pass secret values in `metadata` — this is a durable log. */
 export async function recordAuditEvent(

@@ -71,3 +71,7 @@ deploy/openwa/node_modules/
 deploy/openwa/.env
 deploy/openwa/data/
 deploy/openwa/sessions/
+
+# Local verification scripts (not part of the product)
+*.local.mjs
+*.local.ts
