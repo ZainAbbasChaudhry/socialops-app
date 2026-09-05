@@ -32,6 +32,12 @@ const eslintConfig = defineConfig([
     // Isolated local demo tool - its own package.json/CommonJS Node
     // service, not part of this app's TS/lint surface. See its README.
     "tools/whatsapp-demo-bridge/**",
+    // Deployment artifacts for services that are NOT this Next.js app:
+    // the OpenWA gateway is a standalone Node/ESM service with its own
+    // package.json and Dockerfile. Linting it with the Next/React ruleset
+    // produces nonsense (Baileys' `useMultiFileAuthState` is not a React
+    // hook), so it is excluded here rather than silenced case by case.
+    "deploy/**",
   ]),
 ]);
 

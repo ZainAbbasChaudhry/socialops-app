@@ -18,6 +18,7 @@ const DEMO_COPY: Record<ProviderId, { status: string; subtitle: string }> = {
   facebook: { status: "Connected", subtitle: "Demo Account" },
   instagram: { status: "Connected", subtitle: "Demo Account" },
   whatsapp: { status: "Connected", subtitle: "Demo Number" },
+  openwa: { status: "Connected", subtitle: "Demo Paired Phone" },
   gemini: { status: "Active", subtitle: "Demo AI Engine" },
   omnidimension: { status: "Active", subtitle: "Demo Calling Agent" },
   "google-sheets": { status: "Connected", subtitle: "Demo CRM Sheet" },

@@ -1,7 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto"
 import { NextResponse } from "next/server"
 import { decryptSecret } from "@/lib/integrations/crypto"
-import { findWhatsAppContextByWaba, findWhatsAppContextByVerifyToken } from "@/lib/integrations/whatsapp/repository"
+import { findWhatsAppContextByWaba, findWhatsAppContextByVerifyToken, ensureWhatsAppAccount } from "@/lib/integrations/whatsapp/repository"
+import { cloudApiTransport } from "@/lib/integrations/whatsapp/transport"
 import { processInboundMessage } from "@/lib/integrations/whatsapp/pipeline"
 import { recordWebhookEvent, markWebhookEventProcessed, markWebhookEventFailed } from "@/lib/integrations/webhook-events"
 
@@ -112,6 +113,18 @@ export async function POST(request: Request) {
       const phoneNumberId = value?.metadata?.phone_number_id
       if (!value?.messages || !phoneNumberId) continue
 
+      // Account resolution moved out of the pipeline (which is now
+      // transport-agnostic) and into this route, which is the only place
+      // that knows a Cloud API delivery's phone number id / WABA id.
+      const account = await ensureWhatsAppAccount(
+        context.workspaceId,
+        null,
+        phoneNumberId,
+        wabaId,
+        value.metadata?.display_phone_number ?? null
+      )
+      const transport = cloudApiTransport(phoneNumberId, accessToken)
+
       for (const message of value.messages) {
         const contactName = value.contacts?.find((c) => c.wa_id === message.from)?.profile?.name ?? null
 
@@ -127,11 +140,8 @@ export async function POST(request: Request) {
         try {
           await processInboundMessage({
             workspaceId: context.workspaceId,
-            integrationConnectionId: null,
-            wabaId,
-            phoneNumberId,
-            displayPhoneNumber: value.metadata?.display_phone_number ?? null,
-            accessToken,
+            accountId: account.id,
+            transport,
             from: message.from,
             contactName,
             externalMessageId: message.id,

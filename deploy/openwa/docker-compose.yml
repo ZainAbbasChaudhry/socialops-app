@@ -1,0 +1,42 @@
+# EasyLife OpenWA gateway - wa.easylife.com.pk
+#
+# Two containers: the gateway itself and Caddy in front of it for automatic
+# TLS. The gateway port is deliberately NOT published to the host - only
+# Caddy can reach it, so the only way in from the internet is over HTTPS
+# with the API key.
+
+services:
+  openwa:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # Losing this volume means every workspace must re-scan its QR code.
+      - openwa-sessions:/data/sessions
+    expose:
+      - "3010"
+    healthcheck:
+      # Uses the API key from .env so the check exercises the real auth path.
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3010/health',{headers:{'X-Api-Key':process.env.OPENWA_API_KEY}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - openwa
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  openwa-sessions:
+  caddy-data:
+  caddy-config:

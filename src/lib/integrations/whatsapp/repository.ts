@@ -85,6 +85,94 @@ export async function ensureWhatsAppAccount(
   })
 }
 
+/** Workspace-scoped account lookup. The workspace predicate is part of the
+ * WHERE clause rather than a check after the fact, so a foreign account id
+ * simply doesn't exist as far as this caller is concerned. */
+export async function getWhatsAppAccountById(workspaceId: string, accountId: string) {
+  return withDb(async (db) => {
+    const rows = await db
+      .select()
+      .from(whatsappAccounts)
+      .where(and(eq(whatsappAccounts.id, accountId), eq(whatsappAccounts.workspaceId, workspaceId)))
+      .limit(1)
+    return rows[0] ?? null
+  })
+}
+
+/**
+ * The OpenWA counterpart to `ensureWhatsAppAccount`. An OpenWA account is
+ * keyed by its gateway session id, which is derived from the workspace id
+ * (see transport.ts) - so this is genuinely one row per workspace, created
+ * on first connect and reused forever after.
+ */
+export async function ensureOpenWaAccount(workspaceId: string, sessionId: string, integrationConnectionId: string | null) {
+  return withDb(async (db) => {
+    const existing = await db
+      .select()
+      .from(whatsappAccounts)
+      .where(and(eq(whatsappAccounts.workspaceId, workspaceId), eq(whatsappAccounts.sessionId, sessionId)))
+      .limit(1)
+    if (existing[0]) return existing[0]
+
+    const [created] = await db
+      .insert(whatsappAccounts)
+      .values({
+        id: randomUUID(),
+        workspaceId,
+        integrationConnectionId,
+        provider: "openwa",
+        sessionId,
+        connectionStatus: "disconnected",
+      })
+      .returning()
+    return created
+  })
+}
+
+/**
+ * Resolves which workspace an inbound OpenWA delivery belongs to. Like the
+ * Cloud API's WABA lookup this scans across workspaces (a webhook carries
+ * no session cookie), and like it, the result is only a routing hint: the
+ * caller must still verify the request's HMAC signature before trusting it.
+ */
+export async function findOpenWaAccountBySession(sessionId: string) {
+  return withDb(async (db) => {
+    const rows = await db
+      .select()
+      .from(whatsappAccounts)
+      .where(and(eq(whatsappAccounts.provider, "openwa"), eq(whatsappAccounts.sessionId, sessionId)))
+      .limit(1)
+    return rows[0] ?? null
+  })
+}
+
+/**
+ * Records an observed gateway connection state. Only ever called with a
+ * state the gateway actually reported - the dashboard never optimistically
+ * marks a session connected because a connect request was accepted.
+ */
+export async function updateAccountConnection(
+  workspaceId: string,
+  accountId: string,
+  patch: Partial<{
+    connectionStatus: "disconnected" | "connecting" | "qr" | "connected" | "error"
+    connectedNumber: string | null
+    displayPhoneNumber: string | null
+    lastConnectedAt: Date | null
+    lastDisconnectedAt: Date | null
+    lastError: string | null
+  }>
+) {
+  return withDb(async (db) => {
+    const [updated] = await db
+      .update(whatsappAccounts)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(and(eq(whatsappAccounts.id, accountId), eq(whatsappAccounts.workspaceId, workspaceId)))
+      .returning()
+    return updated ?? null
+  })
+}
+
 export async function ensureConversation(workspaceId: string, whatsappAccountId: string, contactPhone: string) {
   return withDb(async (db) => {
     const existing = await db

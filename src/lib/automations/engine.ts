@@ -7,6 +7,7 @@ import {
 import { createNotification } from "@/lib/platform/notifications"
 import { executeAction, type ActionContext } from "@/lib/automations/actions"
 import type { Automation, AutomationTriggerType, SocialPlatform } from "@/types"
+import type { WhatsAppReplyContext } from "@/lib/integrations/whatsapp/transport"
 
 /**
  * Real automation execution engine. The CRUD layer (create/list/toggle/
@@ -34,7 +35,7 @@ export interface AutomationEventContext {
   score?: number
   tags?: string[]
   actorUserId?: string | null
-  whatsapp?: { toNumber: string; phoneNumberId: string; accessToken: string; conversationId?: string }
+  whatsapp?: WhatsAppReplyContext
   /** Identifies the underlying event (an inbound message id, a call id) -
    * not a random per-dispatch id. Without one, a retried caller (a job
    * queue retry, a duplicate webhook delivery) could fire the same

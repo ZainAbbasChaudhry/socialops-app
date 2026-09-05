@@ -63,3 +63,11 @@ tools/whatsapp-demo-bridge/.wwebjs_auth/
 tools/whatsapp-demo-bridge/.wwebjs_cache/
 tools/whatsapp-demo-bridge/node_modules/
 tools/whatsapp-demo-bridge/*.log
+
+# OpenWA gateway (deploy/openwa/) - standalone Node service with its own
+# package.json. Never commit its dependencies, its .env, or - above all -
+# paired WhatsApp session credentials.
+deploy/openwa/node_modules/
+deploy/openwa/.env
+deploy/openwa/data/
+deploy/openwa/sessions/

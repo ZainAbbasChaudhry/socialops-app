@@ -3,6 +3,7 @@ import type { ProviderId } from "./providers"
 import { resolveCredentialValue, type TestConnectionResult } from "./service"
 import { getConnection } from "./repository"
 import { testWhatsAppCredentials } from "./whatsapp/cloud-api"
+import { testOpenWaGateway } from "./whatsapp/openwa-client"
 import { testOmniDimensionCredentials } from "./omnidimension/client"
 import { listFacebookPages } from "./facebook/client"
 import { getLinkedInstagramAccount } from "./instagram/client"
@@ -44,6 +45,17 @@ export async function testProviderConnection(workspaceId: string, provider: Prov
         return { ok: false, status: "not_configured", message: "Phone Number ID and access token are both required." }
       }
       return testWhatsAppCredentials(phoneNumberId, accessToken)
+    }
+
+    case "openwa": {
+      const { value: baseUrl } = resolveCredentialValue(row, "baseUrl", provider)
+      const { value: apiKey } = resolveCredentialValue(row, "apiKey", provider)
+      if (!baseUrl || !apiKey) {
+        return { ok: false, status: "not_configured", message: "Gateway base URL and API key are both required." }
+      }
+      // Health probe only - deliberately never sends a WhatsApp message and
+      // never disturbs a live pairing, so testing is free and safe to repeat.
+      return testOpenWaGateway({ baseUrl, apiKey })
     }
 
     case "omnidimension": {

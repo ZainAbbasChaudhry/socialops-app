@@ -1,0 +1,18 @@
+{
+  "name": "easylife-openwa-gateway",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Persistent WhatsApp gateway for the EasyLife dashboard. Baileys NOWEB engine - no browser, no puppeteer, no whatsapp-web.js.",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.9",
+    "express": "^4.21.2",
+    "pino": "^9.5.0",
+    "qrcode": "^1.5.4"
+  }
+}

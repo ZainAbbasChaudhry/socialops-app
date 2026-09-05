@@ -4,7 +4,7 @@ import { queueCall, recordBlockedCall } from "@/lib/platform/calls"
 import { resolveActiveConnection } from "@/lib/integrations/credential-resolution"
 import { resolveCredentialValue } from "@/lib/integrations/service"
 import { enqueueJob } from "@/lib/jobs/queue"
-import { sendWhatsAppTextMessage } from "@/lib/integrations/whatsapp/cloud-api"
+import { resolveTransportForAccount, type WhatsAppReplyContext } from "@/lib/integrations/whatsapp/transport"
 import { insertOutboundMessage, updateConversation } from "@/lib/integrations/whatsapp/repository"
 import { syncLeadToSheet } from "@/lib/integrations/google-sheets/sync"
 import { bookMeeting } from "@/lib/integrations/google-calendar/booking"
@@ -30,7 +30,7 @@ export interface ActionContext {
    * conversation's message history, exactly like the qualification bot's
    * replies are - without it, an automation's reply would send but never
    * show up in the Inbox thread. */
-  whatsapp?: { toNumber: string; phoneNumberId: string; accessToken: string; conversationId?: string }
+  whatsapp?: WhatsAppReplyContext
 }
 
 export interface ActionResult {
@@ -47,7 +47,14 @@ async function sendWhatsAppReply(actionValue: string | undefined, ctx: ActionCon
   const text = actionValue?.trim()
   if (!text) return blocked("This action has no reply text configured.")
 
-  const result = await sendWhatsAppTextMessage(ctx.whatsapp.phoneNumberId, ctx.whatsapp.accessToken, ctx.whatsapp.toNumber, text)
+  // Credentials are resolved here, at send time, from the account the
+  // triggering message arrived on - so a rotated Cloud API token or a
+  // re-paired OpenWA session is picked up immediately, and this action
+  // works identically on either transport.
+  const resolved = await resolveTransportForAccount(ctx.workspaceId, ctx.whatsapp.accountId)
+  if (!resolved.ok) return blocked(resolved.errorMessage)
+
+  const result = await resolved.transport.sendText(ctx.whatsapp.toNumber, text)
 
   // Persisted with the truthful provider outcome either way - never a fake
   // "sent" record if the provider call actually failed. Only possible when

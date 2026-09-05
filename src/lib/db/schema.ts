@@ -162,10 +162,24 @@ export const whatsappAccounts = socialops.table("whatsapp_accounts", {
   id: uuid("id").primaryKey(),
   workspaceId: uuid("workspace_id").notNull(),
   integrationConnectionId: uuid("integration_connection_id"),
-  phoneNumberId: text("phone_number_id").notNull(),
-  wabaId: text("waba_id").notNull(),
+  // Nullable since migration 0012: an OpenWA (Baileys NOWEB) session is a
+  // paired phone, not a Meta business asset, so it has neither identifier.
+  phoneNumberId: text("phone_number_id"),
+  wabaId: text("waba_id"),
   displayPhoneNumber: text("display_phone_number"),
   status: text("status").notNull().default("active"),
+  /** Which transport this account speaks: 'cloud-api' | 'openwa'. */
+  provider: text("provider").notNull().default("cloud-api"),
+  /** OpenWA gateway session id. Server-derived from the workspace id -
+   * never accepted from the browser. NULL for Cloud API accounts. */
+  sessionId: text("session_id"),
+  /** 'disconnected' | 'connecting' | 'qr' | 'connected' | 'error'. Only
+   * ever set from an observed gateway state, never assumed. */
+  connectionStatus: text("connection_status").notNull().default("disconnected"),
+  connectedNumber: text("connected_number"),
+  lastConnectedAt: timestamp("last_connected_at", { withTimezone: true }),
+  lastDisconnectedAt: timestamp("last_disconnected_at", { withTimezone: true }),
+  lastError: text("last_error"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 })

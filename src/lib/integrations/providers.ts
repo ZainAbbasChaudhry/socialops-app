@@ -11,6 +11,7 @@
 export type ProviderId =
   | "gemini"
   | "whatsapp"
+  | "openwa"
   | "facebook"
   | "instagram"
   | "tiktok"
@@ -181,6 +182,45 @@ export const PROVIDER_REGISTRY: Record<ProviderId, ProviderDefinition> = {
     requiresWebhook: true,
     webhookPath: "/api/webhooks/whatsapp",
     setupDocsUrl: "https://developers.facebook.com/docs/whatsapp/cloud-api/get-started",
+  },
+  openwa: {
+    id: "openwa",
+    name: "WhatsApp (OpenWA / Baileys NOWEB)",
+    category: "messaging",
+    description:
+      "Self-hosted WhatsApp gateway. A phone is paired by QR once and the gateway holds the session, so there is no Meta Business verification, no per-message fee and no WABA. Runs as its own persistent service (see deploy/openwa) because a paired WhatsApp socket cannot live inside a request-scoped web app.",
+    capabilities: ["api_key", "webhook", "messages"],
+    credentialFields: [
+      {
+        key: "baseUrl",
+        label: "Gateway base URL",
+        type: "url",
+        secret: false,
+        required: true,
+        description: "e.g. https://wa.easylife.com.pk - the OpenWA gateway this workspace sends through.",
+      },
+      {
+        key: "apiKey",
+        label: "Gateway API key",
+        type: "password",
+        secret: true,
+        required: true,
+        description: "Sent as X-Api-Key on every call to the gateway.",
+      },
+      {
+        key: "webhookSecret",
+        label: "Webhook signing secret",
+        type: "password",
+        secret: true,
+        required: true,
+        description: "Shared with the gateway; every inbound delivery is HMAC-signed with it and rejected if it doesn't match.",
+      },
+    ],
+    supportedModes: ["demo", "live"],
+    requiresOAuth: false,
+    requiresWebhook: true,
+    webhookPath: "/api/webhooks/openwa",
+    setupDocsUrl: "https://baileys.wiki/",
   },
   facebook: {
     id: "facebook",

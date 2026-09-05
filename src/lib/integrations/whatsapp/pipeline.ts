@@ -2,14 +2,13 @@ import type { LeadStage } from "@/types"
 import { findLeadByWhatsAppNumber, getLead, createLead, updateLead, createActivity } from "@/lib/leads/repository"
 import { bandForScore } from "@/lib/leads/scoring"
 import {
-  ensureWhatsAppAccount,
   ensureConversation,
   updateConversation,
   insertInboundMessageIfNew,
   insertOutboundMessage,
   listMessages,
 } from "./repository"
-import { sendWhatsAppTextMessage } from "./cloud-api"
+import type { WhatsAppTransport } from "./transport"
 import { runQualificationTurn, scoreQualification, type KnownQualification, type ConversationTurn } from "./gemini-qualification"
 import { resolveActiveApiKey } from "@/lib/integrations/credential-resolution"
 import { dispatchAutomationEvent } from "@/lib/automations/engine"
@@ -39,11 +38,14 @@ function nextStage(currentStage: LeadStage, score: number, escalate: boolean): L
 
 export interface InboundTextMessage {
   workspaceId: string
-  integrationConnectionId: string | null
-  wabaId: string
-  phoneNumberId: string
-  displayPhoneNumber: string | null
-  accessToken: string
+  /** The already-resolved `whatsapp_accounts` row this delivery arrived on.
+   * Each webhook route resolves its own account (the Cloud API route by
+   * phone number id, the OpenWA route by session id) before calling in
+   * here, so this pipeline never has to know which provider it is serving. */
+  accountId: string
+  /** How to reply. Cloud API or OpenWA - the pipeline cannot tell, and
+   * deliberately has no way to find out. */
+  transport: WhatsAppTransport
   from: string
   contactName: string | null
   externalMessageId: string
@@ -57,15 +59,11 @@ export interface InboundTextMessage {
  * `{ duplicate: true }` if this external message ID was already processed,
  * so the webhook route can always answer 200 without reprocessing. */
 export async function processInboundMessage(msg: InboundTextMessage): Promise<{ duplicate: boolean; escalated?: boolean }> {
-  const account = await ensureWhatsAppAccount(
-    msg.workspaceId,
-    msg.integrationConnectionId,
-    msg.phoneNumberId,
-    msg.wabaId,
-    msg.displayPhoneNumber
-  )
-  const conversation = await ensureConversation(msg.workspaceId, account.id, msg.from)
-  const whatsappCtx = { toNumber: msg.from, phoneNumberId: msg.phoneNumberId, accessToken: msg.accessToken, conversationId: conversation.id }
+  const conversation = await ensureConversation(msg.workspaceId, msg.accountId, msg.from)
+  // Carries no credentials: the automation engine re-resolves the transport
+  // from `accountId` at send time, so nothing token-shaped travels through
+  // the event context.
+  const whatsappCtx = { toNumber: msg.from, accountId: msg.accountId, conversationId: conversation.id }
 
   const inserted = await insertInboundMessageIfNew(
     msg.workspaceId,
@@ -185,7 +183,7 @@ export async function processInboundMessage(msg: InboundTextMessage): Promise<{ 
     })
   }
 
-  const sendResult = await sendWhatsAppTextMessage(msg.phoneNumberId, msg.accessToken, msg.from, turn.reply)
+  const sendResult = await msg.transport.sendText(msg.from, turn.reply)
   await insertOutboundMessage(
     msg.workspaceId,
     conversation.id,
