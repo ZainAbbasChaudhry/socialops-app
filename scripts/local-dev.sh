@@ -93,7 +93,11 @@ export PORT
 # --- 4. Install and build --------------------------------------------------
 if [ ! -d node_modules ]; then
   say "Installing dependencies (first run - this takes a minute)"
-  npm install
+  # --include=dev is required, not optional: .env.local sets NODE_ENV=production
+  # (the build needs it), and npm omits devDependencies under that NODE_ENV.
+  # Without this the install silently succeeds and the build then fails on a
+  # missing @tailwindcss/postcss.
+  npm install --include=dev
 else
   say "Dependencies already installed"
 fi
