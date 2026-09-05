@@ -4,8 +4,7 @@ import { requireAuth, requireRole } from "@/lib/auth/guard"
 import { verifySameOrigin } from "@/lib/auth/csrf"
 import { requireClientMode } from "@/lib/auth/dashboard-mode-guard"
 import { getConversationById, listMessages, insertOutboundMessage, updateConversation } from "@/lib/integrations/whatsapp/repository"
-import { sendWhatsAppTextMessage } from "@/lib/integrations/whatsapp/cloud-api"
-import { resolveActiveConnection, resolveCredentialValue } from "@/lib/integrations/credential-resolution"
+import { resolveTransportForAccount } from "@/lib/integrations/whatsapp/transport"
 import { apiError } from "@/lib/api/errors"
 
 export async function GET(_request: Request, ctx: { params: Promise<{ id: string }> }) {
@@ -37,9 +36,16 @@ export async function GET(_request: Request, ctx: { params: Promise<{ id: string
 const sendSchema = z.object({ body: z.string().trim().min(1).max(4096) })
 
 /** Lets a team member reply to a real WhatsApp conversation from the
- * dashboard - a genuine send through the Cloud API, not a demo simulation.
+ * dashboard - a genuine provider send, not a demo simulation.
  * Marking the conversation "human" reflects that a person just took over
- * from the bot, same transition the chatbot pipeline makes on escalation. */
+ * from the bot, same transition the chatbot pipeline makes on escalation.
+ *
+ * The transport is resolved from the conversation's own account, so this
+ * works on either provider. It previously called the Cloud API directly,
+ * which meant an OpenWA workspace got "WhatsApp is not connected" here and
+ * could not take a conversation over at all - and because that check
+ * returned before the status update, the bot kept replying to a
+ * conversation a human was trying to handle. */
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const originCheck = verifySameOrigin(request)
   if (originCheck) return originCheck
@@ -58,17 +64,12 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
 
     const body = sendSchema.parse(await request.json())
 
-    const { live, row } = await resolveActiveConnection(auth.ctx.workspaceId, "whatsapp")
-    if (!live) {
-      return NextResponse.json({ error: "WhatsApp is not connected and activated for this workspace. Configure it in Integrations." }, { status: 400 })
-    }
-    const { value: phoneNumberId } = resolveCredentialValue(row, "phoneNumberId", "whatsapp")
-    const { value: accessToken } = resolveCredentialValue(row, "accessToken", "whatsapp")
-    if (!phoneNumberId || !accessToken) {
-      return NextResponse.json({ error: "WhatsApp credentials are incomplete for this workspace." }, { status: 400 })
+    const resolved = await resolveTransportForAccount(auth.ctx.workspaceId, conversation.whatsappAccountId)
+    if (!resolved.ok) {
+      return NextResponse.json({ error: resolved.errorMessage }, { status: 400 })
     }
 
-    const result = await sendWhatsAppTextMessage(phoneNumberId, accessToken, conversation.contactPhone, body.body)
+    const result = await resolved.transport.sendText(conversation.contactPhone, body.body)
     const message = await insertOutboundMessage(
       auth.ctx.workspaceId,
       id,
