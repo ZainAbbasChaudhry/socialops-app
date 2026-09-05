@@ -48,7 +48,12 @@ export function computeReadiness(row: IntegrationConnectionRow | null, provider:
   // successfully, since that is the only genuine evidence available.
   let webhookComplete = true
   if (def.requiresWebhook) {
-    webhookComplete = row?.status === "connected" || row?.lastSuccessAt !== null
+    // `row?.lastSuccessAt` is `undefined` (not null) when there is no
+    // connection row at all, and `undefined !== null` is true - which made
+    // an entirely unconfigured provider display "Webhook verified ✓".
+    // Coalescing to null first restores the intended meaning: verified only
+    // once this connection has actually succeeded at least once.
+    webhookComplete = row?.status === "connected" || (row?.lastSuccessAt ?? null) !== null
     if (!webhookComplete) missing.push("Webhook verification")
   }
 
