@@ -1,0 +1,28 @@
+# Postgres for local development only. The dashboard itself runs on the host
+# with `npm start`, not in a container - that keeps the local build identical
+# to the one that ships to cPanel.
+#
+#   docker compose -f deploy/local/docker-compose.yml up -d
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: easylife
+      POSTGRES_PASSWORD: easylife_local
+      POSTGRES_DB: easylife_dev
+    ports:
+      # Host port 5433, not 5432, so this never collides with a Postgres
+      # already installed on the machine.
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - easylife-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U easylife -d easylife_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  easylife-pgdata:
