@@ -137,18 +137,42 @@ export async function runQualificationTurn(
     if (typeof parsed.reply !== "string" || !parsed.reply.trim()) return fallbackTurn(newMessage)
 
     const extracted: KnownQualification = {}
-    if (typeof parsed.name === "string") extracted.name = parsed.name
-    if (typeof parsed.businessType === "string") extracted.businessType = parsed.businessType
-    if (typeof parsed.location === "string") extracted.location = parsed.location
-    if (typeof parsed.serviceInterested === "string") extracted.serviceInterested = parsed.serviceInterested
-    if (typeof parsed.requirement === "string") extracted.requirement = parsed.requirement
-    if (typeof parsed.painPoint === "string") extracted.painPoint = parsed.painPoint
-    if (typeof parsed.budget === "string") extracted.budget = parsed.budget
-    if (typeof parsed.timeline === "string") extracted.timeline = parsed.timeline
-    if (parsed.decisionMaker === "yes" || parsed.decisionMaker === "no" || parsed.decisionMaker === "unknown") {
+
+    /** A model that has nothing to report for a field returns null, "" or
+     * "unknown" more or less interchangeably. Only a non-empty string is
+     * new knowledge - accepting "" meant a later turn could blank out a
+     * name the customer had already given, leaving the lead nameless in the
+     * CRM and prompting the bot to ask for it again. Values are also length
+     * -clamped: the REST API caps these columns, and a model reply should
+     * not be able to write something the API itself would reject. */
+    const take = (value: unknown, max = 500): string | undefined => {
+      if (typeof value !== "string") return undefined
+      const trimmed = value.trim()
+      return trimmed ? trimmed.slice(0, max) : undefined
+    }
+
+    extracted.name = take(parsed.name, 200)
+    extracted.businessType = take(parsed.businessType, 200)
+    extracted.location = take(parsed.location, 200)
+    extracted.serviceInterested = take(parsed.serviceInterested, 200)
+    extracted.requirement = take(parsed.requirement, 2000)
+    extracted.painPoint = take(parsed.painPoint, 2000)
+    extracted.budget = take(parsed.budget, 100)
+    extracted.timeline = take(parsed.timeline, 100)
+
+    // "unknown" is the model saying it still doesn't know - that is not a
+    // fact, and treating it as one used to overwrite a confirmed "yes" and
+    // drop the lead's score across a band boundary.
+    if (parsed.decisionMaker === "yes" || parsed.decisionMaker === "no") {
       extracted.decisionMaker = parsed.decisionMaker
     }
     if (typeof parsed.wantsCall === "boolean") extracted.wantsCall = parsed.wantsCall
+
+    // Drop the keys `take` returned undefined for, so spreading `extracted`
+    // over what is already known cannot erase anything.
+    for (const key of Object.keys(extracted) as (keyof KnownQualification)[]) {
+      if (extracted[key] === undefined) delete extracted[key]
+    }
 
     return {
       reply: parsed.reply.trim(),

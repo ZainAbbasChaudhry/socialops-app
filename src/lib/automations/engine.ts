@@ -33,6 +33,10 @@ export interface AutomationEventContext {
   messageBody?: string
   sentiment?: string
   score?: number
+  /** The score this lead had BEFORE this event. Supplied by any source
+   * that can know it, so "lead score above N" can be a threshold CROSSING
+   * rather than a level - see triggerValueMatches. */
+  previousScore?: number
   tags?: string[]
   actorUserId?: string | null
   whatsapp?: WhatsAppReplyContext
@@ -71,7 +75,17 @@ function triggerValueMatches(automation: Automation, context: AutomationEventCon
   if (type === "lead-score-above") {
     if (!value || context.score === undefined) return false
     const threshold = Number(value)
-    return !Number.isNaN(threshold) && context.score >= threshold
+    if (Number.isNaN(threshold)) return false
+
+    // Edge-triggered: the score must CROSS the threshold on this event, not
+    // merely sit above it. As a level check this fired on every subsequent
+    // message from an already-qualified lead, and since the dedupe key is
+    // per-message it was never suppressed - a "score above 70 -> queue AI
+    // call" automation placed a fresh real phone call for every reply the
+    // lead sent. When the caller can't supply previousScore the old level
+    // behaviour is kept, so non-WhatsApp sources are unaffected.
+    if (context.previousScore === undefined) return context.score >= threshold
+    return context.previousScore < threshold && context.score >= threshold
   }
   if (type === "keyword") {
     return Boolean(value && context.messageBody?.toLowerCase().includes(value.toLowerCase()))

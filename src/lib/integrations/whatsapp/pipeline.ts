@@ -1,4 +1,5 @@
-import type { LeadStage } from "@/types"
+import type { LeadStage, LeadIntentStatus } from "@/types"
+import { LEAD_STAGE_ORDER } from "@/lib/lead-status"
 import { findLeadByWhatsAppNumber, getLead, createLead, updateLead, createActivity } from "@/lib/leads/repository"
 import { bandForScore } from "@/lib/leads/scoring"
 import {
@@ -13,12 +14,34 @@ import { runQualificationTurn, scoreQualification, type KnownQualification, type
 import { resolveActiveApiKey } from "@/lib/integrations/credential-resolution"
 import { dispatchAutomationEvent } from "@/lib/automations/engine"
 
-const STAGE_ORDER: LeadStage[] = ["whatsapp-started", "qualifying", "interested", "qualified", "ready-for-sales"]
+/** The bot's own ladder - the only stages it is allowed to move a lead
+ * into. Ranking is done against the canonical LEAD_STAGE_ORDER, never
+ * against this subset: an `indexOf` miss on the subset used to return -1
+ * for `won`, `lost`, `human-followup`, `meeting-booked`, `call-scheduled`
+ * and `called`, and the "never move backwards" guard then treated -1 as
+ * "earlier than anything" and reset the lead. A won deal replying "thanks,
+ * when do we start?" was silently dragged back to `interested`. */
+const BOT_STAGES: LeadStage[] = ["whatsapp-started", "qualifying", "interested", "qualified", "ready-for-sales"]
+
+/** Stages the bot must never touch: a human (or a closed deal) owns the
+ * lead from here on. */
+const BOT_HANDS_OFF_STAGES: LeadStage[] = ["won", "lost", "human-followup", "meeting-booked", "call-scheduled", "called"]
+
+/** Statuses a human sets deliberately. bandForScore only ever returns
+ * cold/warm/interested/qualified, so writing its result unconditionally
+ * used to erase these - a lead marked `not-interested` was pulled back to
+ * `warm` simply by messaging again, and a `spam` lead re-entered the
+ * funnel. */
+const HUMAN_OWNED_STATUSES: LeadIntentStatus[] = ["not-interested", "existing-customer", "support", "spam", "human-review"]
 
 function nextStage(currentStage: LeadStage, score: number, escalate: boolean): LeadStage {
+  // A stage the bot doesn't own is never changed by the bot, in either
+  // direction. This is the guard that protects won/lost and human handoff.
+  if (BOT_HANDS_OFF_STAGES.includes(currentStage)) return currentStage
+
   let target: LeadStage
   if (escalate) {
-    target = score >= 51 ? "ready-for-sales" : "human-followup"
+    target = "human-followup"
   } else if (score >= 71) {
     target = "qualified"
   } else if (score >= 51) {
@@ -30,10 +53,13 @@ function nextStage(currentStage: LeadStage, score: number, escalate: boolean): L
   }
 
   if (target === "human-followup") return target
-  const currentIndex = STAGE_ORDER.indexOf(currentStage)
-  const targetIndex = STAGE_ORDER.indexOf(target)
-  if (currentIndex === -1 || targetIndex > currentIndex) return target
-  return currentStage
+
+  // Rank against the canonical order so an unexpected current stage can
+  // never be mistaken for "before the beginning".
+  const currentIndex = LEAD_STAGE_ORDER.indexOf(currentStage)
+  const targetIndex = LEAD_STAGE_ORDER.indexOf(target)
+  if (currentIndex === -1) return BOT_STAGES.includes(target) ? target : currentStage
+  return targetIndex > currentIndex ? target : currentStage
 }
 
 export interface InboundTextMessage {
@@ -149,7 +175,8 @@ export async function processInboundMessage(msg: InboundTextMessage): Promise<{ 
     timeline: mergedKnown.timeline,
     leadScore: scoreResult.score,
     stage: targetStage,
-    status: band.status,
+    // Leave a human-set status alone; the score still updates underneath it.
+    status: HUMAN_OWNED_STATUSES.includes(lead.status as LeadIntentStatus) ? undefined : band.status,
     callPermission: scoreResult.callPermission,
   })
 
@@ -157,10 +184,15 @@ export async function processInboundMessage(msg: InboundTextMessage): Promise<{ 
     await createActivity(msg.workspaceId, leadId, null, "qualification-updated", `Escalated to human: ${turn.escalationReason}`)
   }
 
+  // previousScore turns "lead score above N" into a threshold CROSSING in
+  // the engine, instead of a level that re-matched on every message an
+  // already-qualified lead sent - which queued a fresh real phone call each
+  // time. See triggerValueMatches.
   await dispatchAutomationEvent("lead-score-above", {
     workspaceId: msg.workspaceId,
     leadId,
     score: scoreResult.score,
+    previousScore: lead.score ?? 0,
     whatsapp: whatsappCtx,
     dedupeKey: msg.externalMessageId,
   })

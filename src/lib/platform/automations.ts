@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { and, eq, desc } from "drizzle-orm"
+import { and, eq, desc, sql } from "drizzle-orm"
 import { withDb } from "@/lib/db/client"
 import { automations, automationRuns } from "@/lib/db/schema"
 import type { Automation, AutomationStatus, AutomationStep, AutomationTriggerType, AutomationConditionType, AutomationActionType, AutomationRules, SocialPlatform } from "@/types"
@@ -154,10 +154,12 @@ export async function recordAutomationRun(
       .returning({ id: automationRuns.id })
 
     if (status === "completed") {
-      const [current] = await db.select({ runsLast30d: automations.runsLast30d }).from(automations).where(eq(automations.id, automationId))
+      // Atomic - see the note in resolveAutomationRun. Two automations
+      // completing concurrently both read the same value and both wrote
+      // value+1, so the counter advanced by one for two runs.
       await db
         .update(automations)
-        .set({ runsLast30d: (current?.runsLast30d ?? 0) + 1, lastRunAt: new Date(), updatedAt: new Date() })
+        .set({ runsLast30d: sql`${automations.runsLast30d} + 1`, lastRunAt: new Date(), updatedAt: new Date() })
         .where(eq(automations.id, automationId))
     }
 
@@ -171,18 +173,26 @@ export async function resolveAutomationRun(
   errorMessage?: string
 ): Promise<AutomationRun | null> {
   return withDb(async (db) => {
+    // Only a run still awaiting approval can be resolved. The approve route
+    // reads the run, executes the action, then calls this - a check-then-act
+    // pair. Without this predicate two concurrent approvals (a double-click,
+    // or two managers) both passed the read and both landed here, so the
+    // action ran twice: two queued calls, two dispatch jobs, the lead phoned
+    // twice, and runsLast30d incremented twice for one run. Now the second
+    // resolver updates zero rows and gets null back.
     const [row] = await db
       .update(automationRuns)
       .set({ status, errorMessage, completedAt: new Date() })
-      .where(eq(automationRuns.id, runId))
+      .where(and(eq(automationRuns.id, runId), eq(automationRuns.status, "pending-approval")))
       .returning()
     if (!row) return null
 
     if (status === "completed") {
-      const [current] = await db.select({ runsLast30d: automations.runsLast30d }).from(automations).where(eq(automations.id, row.automationId))
+      // Atomic increment - a read-then-write here lost updates whenever two
+      // runs of the same automation completed concurrently.
       await db
         .update(automations)
-        .set({ runsLast30d: (current?.runsLast30d ?? 0) + 1, lastRunAt: new Date(), updatedAt: new Date() })
+        .set({ runsLast30d: sql`${automations.runsLast30d} + 1`, lastRunAt: new Date(), updatedAt: new Date() })
         .where(eq(automations.id, row.automationId))
     }
 
