@@ -27,6 +27,12 @@ NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
 say "Node $(node -v)"
 
 # --- 2. Postgres -----------------------------------------------------------
+# An existing .env.local is loaded FIRST so its DATABASE_URL counts as
+# "already supplied". Without this, a machine that set up against its own
+# Postgres was told to start Docker on every run after the first - the
+# database was configured, just not visible yet at this point in the script.
+if [ -f .env.local ]; then set -a; . ./.env.local; set +a; fi
+
 # An externally-supplied DATABASE_URL always wins, so anyone already running
 # their own Postgres is never forced into Docker.
 if [ -n "${DATABASE_URL:-}" ]; then
