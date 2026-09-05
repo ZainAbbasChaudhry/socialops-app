@@ -4,6 +4,7 @@ import { MessageCircle, Target } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ConnectionCard } from "@/components/whatsapp/connection-card"
 import { GatewayConnectionCard } from "@/components/whatsapp/gateway-connection-card"
+import { FeatureControlPanel } from "@/components/whatsapp/feature-control-panel"
 import { QrDemoConnectionCard } from "@/components/whatsapp/qr-demo-connection-card"
 import { QrLinkCard } from "@/components/whatsapp/qr-link-card"
 import { ChatbotDemo } from "@/components/whatsapp/chatbot-demo"
@@ -65,6 +66,7 @@ export function WhatsAppPageContent() {
           <TabsList className="max-w-full overflow-x-auto">
             <TabsTrigger value="connection">Connection</TabsTrigger>
             <TabsTrigger value="live">Live Conversations</TabsTrigger>
+            <TabsTrigger value="capabilities">Capabilities</TabsTrigger>
             <TabsTrigger value="qr-demo">QR Demo</TabsTrigger>
           </TabsList>
 
@@ -81,6 +83,13 @@ export function WhatsAppPageContent() {
 
           <TabsContent value="live" className="pt-4">
             <LiveConversationsList />
+          </TabsContent>
+
+          {/* Every WhatsApp capability EasyLife can grant this workspace.
+              Read-only for the client; an EasyLife platform operator can
+              change what the client is entitled to. */}
+          <TabsContent value="capabilities" className="pt-4">
+            <FeatureControlPanel />
           </TabsContent>
 
           <TabsContent value="qr-demo" className="pt-4">
