@@ -1,5 +1,5 @@
 import { randomUUID, randomBytes, createHash } from "node:crypto"
-import { eq, lt, and, inArray } from "drizzle-orm"
+import { eq, lt, and, inArray, isNull } from "drizzle-orm"
 import { withDb } from "@/lib/db/client"
 import { oauthStates, integrationConnections, jobs } from "@/lib/db/schema"
 import { PROVIDER_REGISTRY, type ProviderId } from "./providers"
@@ -101,7 +101,19 @@ export async function consumeOAuthState(state: string, provider: ProviderId): Pr
     if (row.usedAt) return null
     if (row.expiresAt.getTime() < Date.now()) return null
 
-    await db.update(oauthStates).set({ usedAt: new Date() }).where(eq(oauthStates.id, row.id))
+    // Single-use is enforced by the UPDATE itself, not by the check above.
+    // Read-then-write left a window where two concurrent callbacks carrying
+    // the same state could both pass `if (row.usedAt)` before either write
+    // landed, and both be treated as valid - defeating the one guarantee
+    // this function exists to provide. The `used_at IS NULL` predicate makes
+    // the claim atomic: exactly one caller gets a row back, the loser gets
+    // none and is rejected.
+    const claimed = await db
+      .update(oauthStates)
+      .set({ usedAt: new Date() })
+      .where(and(eq(oauthStates.id, row.id), isNull(oauthStates.usedAt)))
+      .returning({ id: oauthStates.id })
+    if (!claimed[0]) return null
 
     return {
       workspaceId: row.workspaceId,

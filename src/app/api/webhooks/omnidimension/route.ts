@@ -106,7 +106,19 @@ export async function POST(request: Request) {
     eventType: "call_completed",
     payloadSummary: { callId: result.id, sentiment: report.sentiment },
   })
-  if (event) await markWebhookEventProcessed(event.id)
+
+  // A null event means this call_id was already delivered and processed.
+  // Returning here is the whole point of the dedupe: applyCallWebhookResult
+  // above is an idempotent overwrite, but the side effects below are NOT -
+  // they append. Previously only markWebhookEventProcessed was guarded, so
+  // every provider retry (and this endpoint carries no signature, so anyone
+  // can retry it) appended another "call completed" activity to the lead and
+  // another notification to the workspace. Ten redeliveries meant ten of
+  // each for one call. Same shape the WhatsApp webhook already uses.
+  if (!event) {
+    return NextResponse.json({ ok: true, duplicate: true })
+  }
+  await markWebhookEventProcessed(event.id)
 
   if (result.leadId) {
     await createActivity(result.workspaceId, result.leadId, null, "call-completed", report.summary ?? "Call completed.")
