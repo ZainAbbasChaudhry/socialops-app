@@ -35,27 +35,59 @@ import {
  * allocate unbounded memory before the signature is even checked. */
 const MAX_BODY_BYTES = 256 * 1024
 
-type OpenWaEventType = "message" | "session.status"
+/**
+ * OpenWA wraps every delivery as
+ * `{ event, timestamp, sessionId, idempotencyKey, deliveryId, data }` and
+ * names its events `message.received`, `session.status`, and so on - the
+ * message itself lives in `data`, not in a `message` field.
+ *
+ * This was written against a stub that spoke a flatter shape, so real
+ * deliveries were acknowledged and silently discarded: the gateway recorded
+ * a successful delivery, EasyLife recorded nothing, and nothing anywhere
+ * said the two disagreed. Both shapes are accepted now - the flat one costs
+ * nothing to keep and other gateways use it - but OpenWA's is what real
+ * traffic looks like.
+ */
+interface OpenWaMessagePayload {
+  id?: string
+  from?: string
+  pushName?: string | null
+  type?: string
+  /** OpenWA calls the text `body`; the flatter shape calls it `text`. */
+  body?: string | null
+  text?: string | null
+  fromMe?: boolean
+  isGroup?: boolean
+  isStatusBroadcast?: boolean
+  timestamp?: number
+}
 
 interface OpenWaWebhookBody {
-  event?: OpenWaEventType
+  event?: string
   sessionId?: string
-  message?: {
-    id?: string
-    from?: string
-    pushName?: string | null
-    type?: string
-    text?: string | null
-    /** Baileys sets this for messages the paired phone itself sent. Echoes
-     * of our own outbound replies must never re-enter the pipeline. */
-    fromMe?: boolean
-    timestamp?: number
+  /** OpenWA's envelope. */
+  data?: OpenWaMessagePayload & {
+    status?: string
+    phone?: string | null
+    connectedNumber?: string | null
+    error?: string | null
   }
+  /** The flatter shape. */
+  message?: OpenWaMessagePayload
   session?: {
     status?: string
     connectedNumber?: string | null
     error?: string | null
   }
+}
+
+/** True for the message-delivery events, under either naming. */
+function isMessageEvent(event: string | undefined): boolean {
+  return event === "message.received" || event === "message"
+}
+
+function isSessionEvent(event: string | undefined): boolean {
+  return event === "session.status" || event === "session.status.changed" || event === "session.state"
 }
 
 function signatureValid(rawBody: string, header: string | null, secret: string): boolean {
@@ -111,14 +143,17 @@ export async function POST(request: Request) {
   // Connection-state deliveries: the gateway is the only authority on
   // whether a phone is actually paired, so this is the one place
   // connection_status is allowed to become "connected".
-  if (parsed.event === "session.status") {
-    const status = normalizeStatus(parsed.session?.status)
+  if (isSessionEvent(parsed.event)) {
+    const sessionPayload = parsed.session ?? parsed.data
+    const status = normalizeStatus(sessionPayload?.status)
     if (status) {
       await updateAccountConnection(account.workspaceId, account.id, {
         connectionStatus: status,
-        connectedNumber: parsed.session?.connectedNumber ?? account.connectedNumber,
-        displayPhoneNumber: parsed.session?.connectedNumber ?? account.displayPhoneNumber,
-        lastError: status === "error" ? (parsed.session?.error ?? "Gateway reported an error") : null,
+        connectedNumber:
+          sessionPayload?.connectedNumber ?? (sessionPayload as { phone?: string | null })?.phone ?? account.connectedNumber,
+        displayPhoneNumber:
+          sessionPayload?.connectedNumber ?? (sessionPayload as { phone?: string | null })?.phone ?? account.displayPhoneNumber,
+        lastError: status === "error" ? (sessionPayload?.error ?? "Gateway reported an error") : null,
         ...(status === "connected" ? { lastConnectedAt: new Date() } : {}),
         ...(status === "disconnected" ? { lastDisconnectedAt: new Date() } : {}),
       })
@@ -126,8 +161,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true })
   }
 
-  const message = parsed.message
-  if (parsed.event !== "message" || !message?.id || !message.from) {
+  const message = parsed.data ?? parsed.message
+  if (!isMessageEvent(parsed.event) || !message?.id || !message.from) {
     // Unknown or incomplete event types are acknowledged, not retried -
     // returning non-2xx would make the gateway redeliver something this
     // app will never understand.
@@ -138,6 +173,12 @@ export async function POST(request: Request) {
   // the bot's own replies. Processing those would loop the bot against
   // itself, so they are recorded as seen and dropped.
   if (message.fromMe) {
+    return NextResponse.json({ ok: true })
+  }
+
+  // Status/story broadcasts are not a conversation with anyone - turning one
+  // into a lead would put every contact's story into the CRM.
+  if (message.isStatusBroadcast) {
     return NextResponse.json({ ok: true })
   }
 
@@ -165,7 +206,7 @@ export async function POST(request: Request) {
       contactName: message.pushName ?? null,
       externalMessageId: message.id,
       messageType: message.type ?? "text",
-      body: (message.type ?? "text") === "text" ? (message.text ?? null) : null,
+      body: (message.type ?? "text") === "text" ? (message.body ?? message.text ?? null) : null,
       rawMetadata: { from: message.from, type: message.type ?? "text", timestamp: message.timestamp ?? null },
     })
     await markWebhookEventProcessed(event.id)
