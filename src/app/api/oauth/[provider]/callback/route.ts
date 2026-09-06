@@ -3,6 +3,7 @@ import { isProviderId, type ProviderId } from "@/lib/integrations/providers"
 import { getConnection, recordAuditEvent } from "@/lib/integrations/repository"
 import { resolveCredentialValue, storeOAuthTokens } from "@/lib/integrations/service"
 import { consumeOAuthState, exchangeCodeForToken } from "@/lib/integrations/oauth"
+import { autoConfigureProvider } from "@/lib/integrations/auto-configure"
 import { upsertSocialAccount } from "@/lib/platform/social-accounts"
 import { getCreatorInfo } from "@/lib/integrations/tiktok/client"
 import { listMyChannels } from "@/lib/integrations/youtube/client"
@@ -130,7 +131,20 @@ export async function GET(request: Request, ctx: { params: Promise<{ provider: s
       if (savedRow) await syncDiscoveredSocialAccount(consumed.workspaceId, provider, savedRow.id, exchange.accessToken)
     }
 
-    return NextResponse.redirect(`${redirectBase}?oauth=connected&provider=${provider}`)
+    // Everything between "Google said yes" and "this actually does
+    // something": the sheet, its columns, the calendar, the Page. The
+    // client pressed one button and this is the rest of the setup they
+    // would otherwise have had to do themselves.
+    //
+    // Its outcome never changes whether the connection succeeded - the
+    // account IS connected either way - so the redirect only carries
+    // whether the integration came out fully active, and the card shows
+    // what (if anything) is still outstanding.
+    const setup = await autoConfigureProvider(consumed.workspaceId, provider, consumed.actorUserId)
+
+    return NextResponse.redirect(
+      `${redirectBase}?oauth=${setup.activated ? "connected" : "connected_partial"}&provider=${provider}`
+    )
   } catch (error) {
     console.error("OAuth callback error:", error instanceof Error ? error.message : error)
     return apiError(error, "OAuth callback failed")

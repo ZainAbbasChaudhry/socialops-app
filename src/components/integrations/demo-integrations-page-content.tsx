@@ -31,6 +31,8 @@ const DEMO_COPY: Record<ProviderId, { status: string; subtitle: string }> = {
   omnidimension: { status: "Active", subtitle: "Demo Calling Agent" },
   "google-sheets": { status: "Connected", subtitle: "Demo CRM Sheet" },
   "google-calendar": { status: "Connected", subtitle: "Demo Calendar" },
+  gmail: { status: "Connected", subtitle: "Demo Mailbox" },
+  "custom-api": { status: "Not connected", subtitle: "Any other service" },
   linkedin: { status: "Connected", subtitle: "Demo Company Page" },
   tiktok: { status: "Connected", subtitle: "Demo Creator Account" },
   youtube: { status: "Connected", subtitle: "Demo Channel" },

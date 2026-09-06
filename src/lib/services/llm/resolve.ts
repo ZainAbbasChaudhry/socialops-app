@@ -52,10 +52,23 @@ async function configFor(workspaceId: string, provider: LlmProviderId): Promise<
  */
 export async function resolveLlm(workspaceId: string, tier: LlmTier = "complex"): Promise<LlmConfig | null> {
   const available: LlmConfig[] = []
+  let chosen: LlmConfig | null = null
+
   for (const provider of AI_PROVIDERS) {
     const config = await configFor(workspaceId, provider)
-    if (config) available.push(config)
+    if (!config) continue
+    available.push(config)
+    // The provider the workspace actually picked. Connecting an AI in
+    // Integrations is meant to make it the model the whole CRM runs on -
+    // the WhatsApp bot, qualification, summaries, the inbox helper - so a
+    // deliberate choice beats this file's own preference order, for both
+    // tiers. Anything else would mean a client connects a model and then
+    // watches EasyLife keep using a different one.
+    const row = await getConnection(workspaceId, provider as ProviderId)
+    if (row?.config?.aiDefault === true) chosen = config
   }
+
+  if (chosen) return chosen
 
   if (available.length === 0) {
     // Nothing activated for this workspace: fall back to whatever the

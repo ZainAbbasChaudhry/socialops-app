@@ -11,6 +11,7 @@ import { listFacebookPages } from "./facebook/client"
 import { getLinkedInstagramAccount } from "./instagram/client"
 import { listSpreadsheets } from "./google-sheets/client"
 import { listCalendars } from "./google-calendar/client"
+import { getGmailProfile } from "./gmail/client"
 import { getMemberIdentity } from "./linkedin/client"
 import { getCreatorInfo } from "./tiktok/client"
 import { getMe } from "./x/client"
@@ -138,6 +139,44 @@ export async function testProviderConnection(workspaceId: string, provider: Prov
       const result = await listCalendars(accessToken)
       if (!result.ok) return { ok: false, status: "error", message: result.error ?? "Couldn't verify the Google Calendar connection." }
       return { ok: true, status: "connected", message: `Connected - found ${result.calendars?.length ?? 0} calendar(s).` }
+    }
+
+    case "custom-api": {
+      const { value: baseUrl } = resolveCredentialValue(row, "baseUrl", provider)
+      if (!baseUrl) return { ok: false, status: "not_configured", message: "Add the service's address first." }
+      const { value: authStyle } = resolveCredentialValue(row, "authStyle", provider)
+      const { value: apiKey } = resolveCredentialValue(row, "apiKey", provider)
+      const { value: testPath } = resolveCredentialValue(row, "testPath", provider)
+
+      if (authStyle !== "none" && !apiKey) {
+        return { ok: false, status: "not_configured", message: "This service is set to use a key, but none has been saved." }
+      }
+
+      const headers: Record<string, string> = { Accept: "application/json" }
+      if (apiKey && authStyle === "bearer") headers.Authorization = `Bearer ${apiKey}`
+      if (apiKey && authStyle === "api-key-header") headers["X-Api-Key"] = apiKey
+
+      try {
+        const url = new URL(testPath ?? "", baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`)
+        const res = await fetch(url.toString(), { headers, signal: AbortSignal.timeout(15000) })
+        if (res.status === 401 || res.status === 403) {
+          return { ok: false, status: "error", message: "The service rejected that key." }
+        }
+        if (!res.ok) return { ok: false, status: "error", message: `The service answered ${res.status}.` }
+        return { ok: true, status: "connected", message: "Connected - the service answered." }
+      } catch {
+        // Never the raw error: it can carry the full URL, and the URL can
+        // carry a key someone put in a query string.
+        return { ok: false, status: "error", message: "Could not reach that address." }
+      }
+    }
+
+    case "gmail": {
+      const { value: accessToken } = resolveCredentialValue(row, "accessToken", provider)
+      if (!accessToken) return { ok: false, status: "not_configured", message: "Connect your Google account first." }
+      const result = await getGmailProfile(accessToken)
+      if (!result.ok) return { ok: false, status: "error", message: result.error ?? "Couldn't verify the Gmail connection." }
+      return { ok: true, status: "connected", message: `Connected - sending as ${result.emailAddress}.` }
     }
 
     case "linkedin": {

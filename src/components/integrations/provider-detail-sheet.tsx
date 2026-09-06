@@ -30,6 +30,7 @@ export function ProviderDetailSheet({ provider, canManage, open, onOpenChange, o
   const [mode, setMode] = React.useState<IntegrationMode>("disabled")
   const [saving, setSaving] = React.useState(false)
   const [testing, setTesting] = React.useState(false)
+  const [connecting, setConnecting] = React.useState(false)
   const [message, setMessage] = React.useState<{ tone: "success" | "error"; text: string } | null>(null)
 
   // Resets local form state when a different provider is opened — done
@@ -69,6 +70,39 @@ export function ProviderDetailSheet({ provider, canManage, open, onOpenChange, o
       setMessage({ tone: "error", text: "Couldn't reach the server." })
     } finally {
       setSaving(false)
+    }
+  }
+
+  /** Save, test, configure and activate in one press. */
+  async function handleConnect() {
+    setConnecting(true)
+    setMessage(null)
+    try {
+      const res = await fetch(`/api/integrations/${provider!.provider}/connect`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ fields }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setMessage({ tone: "error", text: data.error ?? "Couldn't connect." })
+        return
+      }
+      if (data.provider) onSaved(data.provider)
+      if (!data.ok) {
+        // Saved but not activated - the provider itself said no, and its
+        // own words are more useful than anything this screen could add.
+        setMessage({ tone: "error", text: data.message ?? "The service didn't accept those details." })
+        return
+      }
+      setFields({})
+      const steps: string[] = Array.isArray(data.steps) ? data.steps : []
+      setMessage({ tone: "success", text: steps.length ? steps.join(" ") : "Connected and switched on." })
+    } catch {
+      setMessage({ tone: "error", text: "Couldn't reach the server." })
+    } finally {
+      setConnecting(false)
     }
   }
 
@@ -188,7 +222,27 @@ export function ProviderDetailSheet({ provider, canManage, open, onOpenChange, o
                       {field.required && <span className="text-destructive"> *</span>}
                     </Label>
                     {meta?.description && <p className="text-xs text-muted-foreground">{meta.description}</p>}
-                    {canManage ? (
+                    {canManage && meta?.type === "select" && meta.options ? (
+                      // A field with a fixed set of answers is a list, not a
+                      // free-text box. Making someone type "api-key-header"
+                      // exactly right is the sort of small technical trap
+                      // that makes an integration feel like developer work.
+                      <Select
+                        value={fields[field.key] ?? (field.configured ? (field.maskedValue ?? "") : "")}
+                        onValueChange={(value) => setFields((prev) => ({ ...prev, [field.key]: value ?? "" }))}
+                      >
+                        <SelectTrigger id={field.key}>
+                          <SelectValue placeholder="Choose one" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {meta.options.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : canManage ? (
                       <Input
                         id={field.key}
                         type={field.secret ? "password" : "text"}
@@ -278,15 +332,40 @@ export function ProviderDetailSheet({ provider, canManage, open, onOpenChange, o
         </div>
 
         {canManage && (
-          <SheetFooter className="flex-row gap-2">
-            <Button type="button" variant="outline" className="flex-1" onClick={handleTest} disabled={testing || saving}>
-              {testing && <Loader2 className="size-4 animate-spin" />}
-              Test Connection
-            </Button>
-            <Button type="button" className="flex-1" onClick={handleSave} disabled={saving || testing}>
-              {saving && <Loader2 className="size-4 animate-spin" />}
-              Save
-            </Button>
+          <SheetFooter className="flex-col gap-2">
+            {!def.requiresOAuth ? (
+              // One button that does the whole thing: save, check it
+              // against the real service, configure what follows, switch
+              // it on. Save and Test Connection stay below for the rare
+              // case where someone wants the steps separately, but nobody
+              // has to know they are there.
+              <Button type="button" className="w-full" onClick={handleConnect} disabled={connecting || saving || testing}>
+                {connecting && <Loader2 className="size-4 animate-spin" />}
+                Connect and activate
+              </Button>
+            ) : null}
+            <div className="flex w-full flex-row gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1"
+                onClick={handleTest}
+                disabled={testing || saving || connecting}
+              >
+                {testing && <Loader2 className="size-4 animate-spin" />}
+                Test Connection
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1"
+                onClick={handleSave}
+                disabled={saving || testing || connecting}
+              >
+                {saving && <Loader2 className="size-4 animate-spin" />}
+                Save
+              </Button>
+            </div>
           </SheetFooter>
         )}
       </SheetContent>

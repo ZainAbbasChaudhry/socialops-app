@@ -1,64 +1,99 @@
 "use client"
 
 import { Card } from "@/components/ui/card"
-import { StatusBadge, type StatusTone } from "@/components/dashboard/status-badge"
+import { Button } from "@/components/ui/button"
+import { Loader2 } from "lucide-react"
 import type { ProviderConnectionView } from "./types"
 
-const STATUS_LABEL: Record<ProviderConnectionView["status"], string> = {
-  not_configured: "Needs setup",
-  configured: "Configured",
-  connecting: "Connecting…",
-  connected: "Connected",
-  error: "Error",
-  expired: "Expired",
-  disabled: "Disabled",
+/**
+ * One integration, one button.
+ *
+ * The client should never meet an API key, a callback URL or a token on
+ * this screen. The card says whether the thing is working, and offers the
+ * single action that changes that. Everything technical - the credential
+ * form, the raw status history - lives behind "Manage", for the rare case
+ * where a third party genuinely leaves no simpler route.
+ */
+
+const HEALTH: Record<
+  ProviderConnectionView["connect"]["health"],
+  { dot: string; label: string; text: string }
+> = {
+  connected: { dot: "bg-emerald-500", label: "Connected", text: "text-emerald-600 dark:text-emerald-400" },
+  attention: { dot: "bg-amber-500", label: "Needs attention", text: "text-amber-600 dark:text-amber-400" },
+  disconnected: { dot: "bg-rose-500", label: "Not connected", text: "text-rose-600 dark:text-rose-400" },
 }
 
-const STATUS_TONE: Record<ProviderConnectionView["status"], StatusTone> = {
-  not_configured: "neutral",
-  configured: "info",
-  connecting: "info",
-  connected: "success",
-  error: "error",
-  expired: "warning",
-  disabled: "neutral",
+const METHOD_HINT: Record<ProviderConnectionView["connect"]["method"], string> = {
+  oauth: "Sign in with your account — nothing else to set up.",
+  qr: "Scan a QR code with your phone.",
+  "api-key": "Paste one key and it is done.",
+  manual: "A few details this provider insists on.",
 }
 
-const MODE_LABEL: Record<ProviderConnectionView["mode"], string> = {
-  disabled: "Disabled",
-  demo: "Demo",
-  live: "Live",
+interface ProviderCardProps {
+  provider: ProviderConnectionView
+  canManage: boolean
+  busy?: boolean
+  onConnect: () => void
+  onManage: () => void
 }
 
-function formatRelative(iso: string | null): string {
-  if (!iso) return "Never"
-  const date = new Date(iso)
-  const diffMs = Date.now() - date.getTime()
-  const diffMin = Math.round(diffMs / 60000)
-  if (diffMin < 1) return "Just now"
-  if (diffMin < 60) return `${diffMin}m ago`
-  const diffHr = Math.round(diffMin / 60)
-  if (diffHr < 24) return `${diffHr}h ago`
-  const diffDay = Math.round(diffHr / 24)
-  return `${diffDay}d ago`
-}
+export function ProviderCard({ provider, canManage, busy, onConnect, onManage }: ProviderCardProps) {
+  const { connect } = provider
+  const health = HEALTH[connect.health]
+  // "Manage" is the only thing left to offer on a healthy integration, and
+  // it is also the honest label for the advanced form.
+  const primaryIsManage = connect.actionLabel === "Manage"
 
-export function ProviderCard({ provider, onOpen }: { provider: ProviderConnectionView; onOpen: () => void }) {
   return (
-    <Card interactive className="gap-3 px-4 py-4" onClick={onOpen}>
+    <Card className="gap-3 px-4 py-4">
       <div className="flex items-start justify-between gap-2">
-        <div className="flex flex-col gap-0.5">
-          <span className="text-sm font-medium text-foreground">{provider.name}</span>
-          <span className="text-xs text-muted-foreground">{MODE_LABEL[provider.mode]} mode</span>
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <span className="truncate text-sm font-medium text-foreground">{provider.name}</span>
+          {provider.displayName ? (
+            <span className="truncate text-xs text-muted-foreground">{provider.displayName}</span>
+          ) : null}
         </div>
-        <StatusBadge tone={STATUS_TONE[provider.status]}>{STATUS_LABEL[provider.status]}</StatusBadge>
+        <span className={`flex shrink-0 items-center gap-1.5 text-xs font-medium ${health.text}`}>
+          <span className={`h-2 w-2 rounded-full ${health.dot}`} aria-hidden />
+          {health.label}
+        </span>
       </div>
 
-      <p className="line-clamp-2 text-xs text-muted-foreground">{provider.description}</p>
+      <p className="line-clamp-2 text-xs text-muted-foreground">
+        {connect.healthReason ?? provider.description}
+      </p>
 
-      <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
-        <span>Last tested: {formatRelative(provider.lastTestedAt)}</span>
-        {provider.usingEnvFallback && <span className="text-brand">Server default</span>}
+      {connect.health === "disconnected" ? (
+        <p className="text-xs text-muted-foreground">{METHOD_HINT[connect.method]}</p>
+      ) : null}
+
+      {!connect.oneClickAvailable && connect.health === "disconnected" ? (
+        // Said plainly rather than hidden: this is the one case where the
+        // client genuinely cannot press one button, and pretending
+        // otherwise would send them to a developer console.
+        <p className="text-xs text-amber-600 dark:text-amber-400">
+          EasyLife has not registered its app with this provider yet, so this one still needs its own credentials.
+        </p>
+      ) : null}
+
+      <div className="mt-1 flex items-center gap-2">
+        <Button
+          size="sm"
+          variant={primaryIsManage ? "outline" : "default"}
+          disabled={!canManage || busy}
+          onClick={primaryIsManage ? onManage : onConnect}
+          className="min-w-24"
+        >
+          {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+          {connect.actionLabel}
+        </Button>
+        {!primaryIsManage ? (
+          <Button size="sm" variant="ghost" disabled={!canManage} onClick={onManage}>
+            Advanced
+          </Button>
+        ) : null}
       </div>
     </Card>
   )

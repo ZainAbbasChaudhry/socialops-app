@@ -1,4 +1,5 @@
 import type { IntegrationMode, IntegrationStatus, ProviderId } from "@/lib/integrations/providers"
+import type { ConnectView } from "@/lib/integrations/connect"
 
 export type { IntegrationMode, IntegrationStatus, ProviderId }
 
@@ -38,4 +39,5 @@ export interface ProviderConnectionView {
   lastErrorMessage: string | null
   updatedAt: string | null
   readiness: ProviderReadinessView
+  connect: ConnectView
 }

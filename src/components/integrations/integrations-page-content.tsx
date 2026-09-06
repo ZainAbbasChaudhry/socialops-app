@@ -12,7 +12,11 @@ import { CATEGORY_LABELS, isProviderId, type ProviderCategory } from "@/lib/inte
 const CATEGORY_ORDER: ProviderCategory[] = ["ai", "messaging", "social", "calling", "productivity"]
 
 const OAUTH_RESULT_MESSAGE: Record<string, { tone: "success" | "error"; text: string }> = {
-  connected: { tone: "success", text: "Account connected successfully." },
+  connected: { tone: "success", text: "Connected and set up — nothing else to do." },
+  connected_partial: {
+    tone: "error",
+    text: "Your account is connected, but setup didn't finish. Open the card to see what's left.",
+  },
   denied: { tone: "error", text: "Authorization was cancelled or denied." },
   invalid: { tone: "error", text: "That connection attempt expired or was invalid. Try again." },
   not_configured: { tone: "error", text: "Save the app credentials before connecting." },
@@ -28,8 +32,28 @@ export function IntegrationsPageContent() {
   const [sheetOpen, setSheetOpen] = React.useState(false)
   const [oauthResult, setOauthResult] = React.useState<{ tone: "success" | "error"; text: string } | null>(null)
   const [pendingOAuthProvider, setPendingOAuthProvider] = React.useState<string | null>(null)
+  const [connecting, setConnecting] = React.useState<string | null>(null)
 
   const canManage = user?.role === "owner" || user?.role === "admin"
+
+  /**
+   * The one button. Where the provider allows it, this is the whole
+   * interaction: a redirect to sign in, or a jump to the QR screen. Where
+   * it does not, the same button opens the form rather than dead-ending -
+   * the client still only ever presses one thing.
+   */
+  async function handleConnect(provider: ProviderConnectionView) {
+    const { method, href, oneClickAvailable } = provider.connect
+    if (!oneClickAvailable || method === "api-key" || method === "manual" || !href) {
+      setSelected(provider)
+      setSheetOpen(true)
+      return
+    }
+    setConnecting(provider.provider)
+    // A full navigation, not a fetch: the provider's own sign-in screen has
+    // to be shown in the browser, and that is the point of the redirect.
+    window.location.assign(href)
+  }
 
   React.useEffect(() => {
     function readOAuthRedirectParams() {
@@ -141,7 +165,10 @@ export function IntegrationsPageContent() {
               <ProviderCard
                 key={provider.provider}
                 provider={provider}
-                onOpen={() => {
+                canManage={canManage}
+                busy={connecting === provider.provider}
+                onConnect={() => void handleConnect(provider)}
+                onManage={() => {
                   setSelected(provider)
                   setSheetOpen(true)
                 }}

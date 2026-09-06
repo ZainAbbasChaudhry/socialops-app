@@ -10,6 +10,7 @@ import {
 } from "./repository"
 import { resolveCredentialValue } from "./credential-resolution"
 import { evaluateProviderReadiness, computeReadiness, type ProviderReadiness } from "./readiness"
+import { connectViewFor, type ConnectView } from "./connect"
 import { disconnectSocialAccountsByProvider } from "@/lib/platform/social-accounts"
 
 export { resolveCredentialValue }
@@ -40,6 +41,9 @@ export interface ProviderConnectionView {
   lastErrorMessage: string | null
   updatedAt: string | null
   readiness: ProviderReadiness
+  /** How this one is connected, whether it is working, and what the single
+   * button on its card should say. */
+  connect: ConnectView
 }
 
 export async function getProviderView(workspaceId: string, provider: ProviderId): Promise<ProviderConnectionView> {
@@ -78,6 +82,7 @@ export async function getProviderView(workspaceId: string, provider: ProviderId)
     lastErrorMessage: row?.lastErrorMessage ?? null,
     updatedAt: row?.updatedAt?.toISOString() ?? null,
     readiness,
+    connect: connectViewFor(row, provider),
   }
 }
 
@@ -118,6 +123,7 @@ export async function listProviderViews(workspaceId: string): Promise<ProviderCo
       lastErrorMessage: row?.lastErrorMessage ?? null,
       updatedAt: row?.updatedAt?.toISOString() ?? null,
       readiness: computeReadiness(row, provider),
+      connect: connectViewFor(row, provider),
     }
   })
 }
@@ -220,6 +226,31 @@ export async function storeOAuthTokens(input: StoreOAuthTokensInput): Promise<Pr
   })
 
   return getProviderView(input.workspaceId, input.provider)
+}
+
+/**
+ * Records that a connection has stopped working and needs the client to
+ * sign in again.
+ *
+ * The point is that the dashboard should notice before the client does. A
+ * refresh that has genuinely run out of road used to leave the connection
+ * still showing as connected while quietly failing every call behind it -
+ * the worst of both worlds, because nothing looked wrong. Marking it
+ * expired is what turns the card amber and puts a Reconnect button on it.
+ *
+ * `mode` is deliberately left alone: the workspace still WANTS this
+ * provider live, and reconnecting should restore it without them having to
+ * remember to switch it back on.
+ */
+export async function markConnectionExpired(workspaceId: string, provider: ProviderId, reason: string): Promise<void> {
+  await recordTestResult(workspaceId, provider, {
+    ok: false,
+    status: "expired",
+    errorCode: "token_expired",
+    // The reason reaches the client's screen, so it is the provider's own
+    // message or ours - never a token and never a stack trace.
+    errorMessage: reason,
+  })
 }
 
 /** Providers whose social_accounts rows should be marked disconnected

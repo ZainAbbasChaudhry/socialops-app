@@ -26,6 +26,8 @@ export type ProviderId =
   | "omnidimension"
   | "google-sheets"
   | "google-calendar"
+  | "gmail"
+  | "custom-api"
 
 export type ProviderCategory = "ai" | "messaging" | "social" | "calling" | "productivity"
 
@@ -518,6 +520,86 @@ export const PROVIDER_REGISTRY: Record<ProviderId, ProviderDefinition> = {
       // calendars exist (calendarList) and checking availability
       // (freeBusy) aren't covered by calendar.events alone.
       scopes: ["https://www.googleapis.com/auth/calendar"],
+      platformAppEnvVars: { clientId: ["GOOGLE_PLATFORM_CLIENT_ID", "GOOGLE_CLIENT_ID"], clientSecret: ["GOOGLE_PLATFORM_CLIENT_SECRET", "GOOGLE_CLIENT_SECRET"] },
+    },
+    requiresWebhook: false,
+  },
+  "custom-api": {
+    id: "custom-api",
+    name: "Custom API",
+    category: "productivity",
+    description:
+      "Connect any other service EasyLife doesn't have a card for. Paste the address, choose how it authenticates, and EasyLife checks it works - no webhook wiring, no callback URLs.",
+    capabilities: ["api_key"],
+    credentialFields: [
+      {
+        key: "baseUrl",
+        label: "Address",
+        type: "url",
+        secret: false,
+        required: true,
+        placeholder: "https://api.example.com",
+        description: "The base address of the service, as its documentation gives it.",
+      },
+      {
+        key: "authStyle",
+        label: "How it authenticates",
+        type: "select",
+        secret: false,
+        required: true,
+        description: "Almost every API uses one of these. If you are not sure, the service's own docs say which.",
+        options: [
+          { value: "bearer", label: "Bearer token (most common)" },
+          { value: "api-key-header", label: "X-Api-Key header" },
+          { value: "none", label: "No key needed" },
+        ],
+      },
+      {
+        key: "apiKey",
+        label: "Key",
+        type: "password",
+        secret: true,
+        // Not required, because "No key needed" is a real answer - and a
+        // required field the client cannot fill is exactly the dead end
+        // this whole design exists to avoid.
+        required: false,
+        description: "Leave empty if the service needs no key.",
+      },
+      {
+        key: "testPath",
+        label: "A path to check (optional)",
+        type: "text",
+        secret: false,
+        required: false,
+        placeholder: "/health",
+        description: "Somewhere harmless EasyLife can call to confirm the connection works. Defaults to the address itself.",
+      },
+    ],
+    supportedModes: ["demo", "live"],
+    requiresOAuth: false,
+    requiresWebhook: false,
+  },
+  gmail: {
+    id: "gmail",
+    name: "Gmail",
+    category: "productivity",
+    description:
+      "Send email from the business's own address and log what customers write back against their lead - so an email conversation is part of the CRM record rather than sitting in one person's inbox.",
+    capabilities: ["oauth", "messages"],
+    credentialFields: OAUTH_APP_FIELDS,
+    supportedModes: ["demo", "live"],
+    requiresOAuth: true,
+    oauth: {
+      ...GOOGLE_OAUTH_BASE,
+      // gmail.send is write-only and cannot read anything - deliberately
+      // narrower than the blanket mail scope. gmail.readonly is what makes
+      // logging a customer's replies possible; gmail.modify would also
+      // allow deleting their mail, which nothing here needs.
+      scopes: [
+        "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/userinfo.email",
+      ],
       platformAppEnvVars: { clientId: ["GOOGLE_PLATFORM_CLIENT_ID", "GOOGLE_CLIENT_ID"], clientSecret: ["GOOGLE_PLATFORM_CLIENT_SECRET", "GOOGLE_CLIENT_SECRET"] },
     },
     requiresWebhook: false,

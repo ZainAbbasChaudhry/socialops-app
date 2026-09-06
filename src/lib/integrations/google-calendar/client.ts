@@ -11,6 +11,8 @@ export interface CalendarSummary {
   id: string
   name: string
   primary: boolean
+  /** The calendar's own IANA timezone, when Google reports one. */
+  timezone?: string | null
 }
 
 export interface ListCalendarsResult {
@@ -36,10 +38,14 @@ export async function listCalendars(accessToken: string): Promise<ListCalendarsR
     const items = Array.isArray(json?.items) ? json.items : []
     return {
       ok: true,
-      calendars: items.map((c: { id: string; summary?: string; primary?: boolean }) => ({
+      calendars: items.map((c: { id: string; summary?: string; primary?: boolean; timeZone?: string }) => ({
         id: c.id,
         name: c.summary ?? c.id,
         primary: Boolean(c.primary),
+        // The calendar's own timezone. Without it a slot offered at 3pm
+        // means 3pm on whichever server happens to answer, which is how a
+        // customer ends up with a meeting five hours out.
+        timezone: typeof c.timeZone === "string" ? c.timeZone : null,
       })),
     }
   } catch (error) {

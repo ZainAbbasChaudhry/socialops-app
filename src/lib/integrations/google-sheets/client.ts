@@ -169,3 +169,59 @@ export async function updateRow(accessToken: string, spreadsheetId: string, work
     return { ok: false, error: error instanceof Error ? error.message : "Couldn't reach the Google Sheets API." }
   }
 }
+
+export interface CreateSpreadsheetResult {
+  ok: boolean
+  spreadsheetId?: string
+  worksheetName?: string
+  error?: string
+}
+
+/**
+ * POST /v4/spreadsheets - makes the client's CRM sheet for them.
+ *
+ * This exists so "connect Google Sheets" can mean exactly that. Asking a
+ * business owner to first go to Drive, create a spreadsheet, name a tab,
+ * type ten column headings in the right order and then come back and map
+ * each one is the technical work the one-click rule is meant to remove.
+ *
+ * The sheet is created with its header row already written, so the first
+ * thing they see when they open it is a table that makes sense rather than
+ * a grid of values under A, B, C.
+ */
+export async function createSpreadsheet(
+  accessToken: string,
+  title: string,
+  worksheetName: string,
+  headerRow: string[]
+): Promise<CreateSpreadsheetResult> {
+  try {
+    const res = await fetch(SHEETS_BASE_URL, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(20000),
+      body: JSON.stringify({
+        properties: { title },
+        sheets: [{ properties: { title: worksheetName } }],
+      }),
+    })
+    const json = await res.json().catch(() => null)
+
+    if (res.status === 401) return { ok: false, error: "Google authorization has expired - reconnect Google in Integrations." }
+    if (!res.ok) return { ok: false, error: json?.error?.message ?? `Google Sheets API returned ${res.status}` }
+
+    const spreadsheetId = json?.spreadsheetId as string | undefined
+    if (!spreadsheetId) return { ok: false, error: "Google created no spreadsheet id." }
+
+    // The header row is written separately rather than as part of creation:
+    // if this fails the sheet still exists and is usable, and the failure
+    // is reported honestly instead of leaving a half-made sheet behind a
+    // success message.
+    const header = await appendRow(accessToken, spreadsheetId, worksheetName, headerRow)
+    if (!header.ok) return { ok: true, spreadsheetId, worksheetName, error: header.error }
+
+    return { ok: true, spreadsheetId, worksheetName }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "Couldn't reach the Google Sheets API." }
+  }
+}

@@ -2,7 +2,7 @@ import { enqueueJob, NonRetryableJobError, type JobType, type ClaimedJob } from 
 import { isProviderId, PROVIDER_REGISTRY } from "@/lib/integrations/providers"
 import { getConnection } from "@/lib/integrations/repository"
 import { createNotification } from "@/lib/platform/notifications"
-import { resolveCredentialValue, storeOAuthTokens } from "@/lib/integrations/service"
+import { resolveCredentialValue, storeOAuthTokens, markConnectionExpired } from "@/lib/integrations/service"
 import { refreshAccessToken } from "@/lib/integrations/oauth"
 import { resolveActiveConnection } from "@/lib/integrations/credential-resolution"
 import { dispatchCall } from "@/lib/integrations/omnidimension/client"
@@ -50,6 +50,15 @@ async function refreshTokenHandler(job: ClaimedJob): Promise<void> {
     // app - LinkedIn is a known example. Non-retryable: no amount of
     // waiting produces a refresh token that isn't there, so this is the
     // terminal outcome and always worth notifying about.
+    //
+    // Marked expired as well as notified: a notification can be missed, and
+    // the Integrations card is where the client will look. Without this the
+    // card kept saying "Connected" while every call behind it failed.
+    await markConnectionExpired(
+      job.workspaceId,
+      provider,
+      "This connection can't renew itself automatically. Reconnect to carry on."
+    )
     await createNotification({
       workspaceId: job.workspaceId,
       type: "account-warning",
@@ -62,6 +71,13 @@ async function refreshTokenHandler(job: ClaimedJob): Promise<void> {
   const result = await refreshAccessToken(provider, refreshToken, clientId, clientSecret)
   if (!result.ok || !result.accessToken) {
     if (job.attempts >= job.maxAttempts) {
+      // Only on the final attempt: a transient network failure should not
+      // put a red mark on a connection that is about to refresh fine.
+      await markConnectionExpired(
+        job.workspaceId,
+        provider,
+        result.error ?? "The connection expired and could not renew itself."
+      )
       await createNotification({
         workspaceId: job.workspaceId,
         type: "account-warning",
