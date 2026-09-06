@@ -10,6 +10,11 @@
 
 export type ProviderId =
   | "gemini"
+  | "openai"
+  | "anthropic"
+  | "groq"
+  | "openrouter"
+  | "ollama"
   | "whatsapp"
   | "openwa"
   | "facebook"
@@ -164,6 +169,108 @@ export const PROVIDER_REGISTRY: Record<ProviderId, ProviderDefinition> = {
     envFallback: { envVar: "GEMINI_API_KEY", describes: "server-configured Gemini API key" },
     setupDocsUrl: "https://ai.google.dev/gemini-api/docs/api-key",
   },
+
+  // ---- Bring your own model ------------------------------------------
+  //
+  // Everything below speaks the OpenAI chat-completions shape except
+  // Anthropic, so they cost one adapter between them (see
+  // src/lib/services/llm). A workspace activates whichever it wants and the
+  // whole app - qualification bot, assistant, inbox helper - switches to it
+  // without a code change.
+  //
+  // `model` is a field on every one of them because pinning a model is how
+  // a client controls both cost and behaviour; leaving it blank uses the
+  // provider's sensible default.
+  openai: {
+    id: "openai",
+    name: "OpenAI",
+    category: "ai",
+    description: "Use OpenAI's models for the qualification bot, the assistant and the WhatsApp inbox helper.",
+    capabilities: ["api_key", "ai"],
+    credentialFields: [
+      { key: "apiKey", label: "API key", type: "password", secret: true, required: true, helpUrl: "https://platform.openai.com/api-keys" },
+      { key: "model", label: "Model", type: "text", secret: false, required: false, description: "Leave blank for gpt-4o-mini." },
+    ],
+    supportedModes: ["demo", "live"],
+    requiresOAuth: false,
+    requiresWebhook: false,
+    envFallback: { envVar: "OPENAI_API_KEY", describes: "server-configured OpenAI API key" },
+    setupDocsUrl: "https://platform.openai.com/api-keys",
+  },
+  anthropic: {
+    id: "anthropic",
+    name: "Anthropic Claude",
+    category: "ai",
+    description: "Use Claude for the qualification bot, the assistant and the WhatsApp inbox helper.",
+    capabilities: ["api_key", "ai"],
+    credentialFields: [
+      { key: "apiKey", label: "API key", type: "password", secret: true, required: true, helpUrl: "https://console.anthropic.com/settings/keys" },
+      { key: "model", label: "Model", type: "text", secret: false, required: false, description: "Leave blank for the current Sonnet." },
+    ],
+    supportedModes: ["demo", "live"],
+    requiresOAuth: false,
+    requiresWebhook: false,
+    envFallback: { envVar: "ANTHROPIC_API_KEY", describes: "server-configured Anthropic API key" },
+    setupDocsUrl: "https://console.anthropic.com/settings/keys",
+  },
+  groq: {
+    id: "groq",
+    name: "Groq",
+    category: "ai",
+    description:
+      "Fast open models with a free tier. Strong enough for customer replies and costs nothing until the daily limit - the practical alternative to running your own server.",
+    capabilities: ["api_key", "ai"],
+    credentialFields: [
+      { key: "apiKey", label: "API key", type: "password", secret: true, required: true, helpUrl: "https://console.groq.com/keys" },
+      { key: "model", label: "Model", type: "text", secret: false, required: false, description: "Leave blank for Llama 3.3 70B." },
+    ],
+    supportedModes: ["demo", "live"],
+    requiresOAuth: false,
+    requiresWebhook: false,
+    envFallback: { envVar: "GROQ_API_KEY", describes: "server-configured Groq API key" },
+    setupDocsUrl: "https://console.groq.com/keys",
+  },
+  openrouter: {
+    id: "openrouter",
+    name: "OpenRouter",
+    category: "ai",
+    description: "One key, many models - including free ones. Useful for trying a model before committing to its provider.",
+    capabilities: ["api_key", "ai"],
+    credentialFields: [
+      { key: "apiKey", label: "API key", type: "password", secret: true, required: true, helpUrl: "https://openrouter.ai/keys" },
+      { key: "model", label: "Model", type: "text", secret: false, required: false, description: "e.g. meta-llama/llama-3.3-70b-instruct" },
+    ],
+    supportedModes: ["demo", "live"],
+    requiresOAuth: false,
+    requiresWebhook: false,
+    envFallback: { envVar: "OPENROUTER_API_KEY", describes: "server-configured OpenRouter API key" },
+    setupDocsUrl: "https://openrouter.ai/keys",
+  },
+  ollama: {
+    id: "ollama",
+    name: "Self-hosted model (Ollama / vLLM / LM Studio)",
+    category: "ai",
+    description:
+      "A model running on your own server, so nothing is billed per message and no customer data leaves your infrastructure. Needs 8GB+ RAM and a process that stays up - it cannot run on cPanel hosting, for the same reason the WhatsApp gateway cannot.",
+    capabilities: ["api_key", "ai"],
+    credentialFields: [
+      {
+        key: "baseUrl",
+        label: "Server URL",
+        type: "url",
+        secret: false,
+        required: true,
+        description: "The OpenAI-compatible endpoint, e.g. http://your-server:11434/v1",
+      },
+      { key: "model", label: "Model", type: "text", secret: false, required: false, description: "e.g. llama3.2, qwen2.5. Leave blank for llama3.2." },
+      { key: "apiKey", label: "API key", type: "password", secret: true, required: false, description: "Only if your server requires one." },
+    ],
+    supportedModes: ["demo", "live"],
+    requiresOAuth: false,
+    requiresWebhook: false,
+    setupDocsUrl: "https://ollama.com/download",
+  },
+
   whatsapp: {
     id: "whatsapp",
     name: "WhatsApp Cloud API",

@@ -1,4 +1,5 @@
-import { generateWithGemini } from "@/lib/services/gemini-client"
+import { generateWithLLM } from "@/lib/services/llm"
+import type { LlmConfig } from "@/lib/services/llm/types"
 import { computeLeadScore, bandForScore } from "@/lib/leads/scoring"
 import type { CallPermission, LeadIntentStatus, LeadQualification, LeadScoreFactors } from "@/types"
 
@@ -123,10 +124,13 @@ export async function runQualificationTurn(
   known: KnownQualification,
   recentTurns: ConversationTurn[],
   newMessage: string,
-  apiKey: string | null
+  /** Which model this workspace runs. Resolved by the caller so this
+   * function never has to know whether it is talking to Gemini, a hosted
+   * provider, or the client's own server. */
+  llm: LlmConfig | null
 ): Promise<QualificationTurnResult> {
   const prompt = buildPrompt(known, recentTurns, newMessage)
-  const result = await generateWithGemini(prompt, SYSTEM_INSTRUCTION, apiKey)
+  const result = await generateWithLLM(prompt, SYSTEM_INSTRUCTION, llm)
 
   if (!result.ok) return fallbackTurn(newMessage)
 

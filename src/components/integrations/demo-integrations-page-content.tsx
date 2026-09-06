@@ -20,6 +20,14 @@ const DEMO_COPY: Record<ProviderId, { status: string; subtitle: string }> = {
   whatsapp: { status: "Connected", subtitle: "Demo Number" },
   openwa: { status: "Connected", subtitle: "Demo Paired Phone" },
   gemini: { status: "Active", subtitle: "Demo AI Engine" },
+  // Demo mode shows every provider the product supports, including the ones
+  // a workspace has not chosen - the point of the screen is to show what is
+  // available, and "Not connected" is the honest state for those.
+  openai: { status: "Not connected", subtitle: "Bring your own model" },
+  anthropic: { status: "Not connected", subtitle: "Bring your own model" },
+  groq: { status: "Not connected", subtitle: "Free tier available" },
+  openrouter: { status: "Not connected", subtitle: "Many models, one key" },
+  ollama: { status: "Not connected", subtitle: "Runs on your own server" },
   omnidimension: { status: "Active", subtitle: "Demo Calling Agent" },
   "google-sheets": { status: "Connected", subtitle: "Demo CRM Sheet" },
   "google-calendar": { status: "Connected", subtitle: "Demo Calendar" },

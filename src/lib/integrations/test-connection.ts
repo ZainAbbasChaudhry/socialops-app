@@ -1,4 +1,5 @@
-import { generateWithGemini } from "@/lib/services/gemini-client"
+import { generateWithLLM } from "@/lib/services/llm"
+import { LLM_PROVIDERS } from "@/lib/services/llm/types"
 import type { ProviderId } from "./providers"
 import { resolveCredentialValue, type TestConnectionResult } from "./service"
 import { getConnection } from "./repository"
@@ -30,12 +31,39 @@ export async function testProviderConnection(workspaceId: string, provider: Prov
   const row = await getConnection(workspaceId, provider)
 
   switch (provider) {
-    case "gemini": {
+    // Every language model tests the same way: ask it for one word and see
+    // whether the real model answers. Nothing is reported as connected
+    // because a key is present - only because the provider replied.
+    case "gemini":
+    case "openai":
+    case "anthropic":
+    case "groq":
+    case "openrouter":
+    case "ollama": {
+      const spec = LLM_PROVIDERS[provider]
       const { value: apiKey } = resolveCredentialValue(row, "apiKey", provider)
-      if (!apiKey) return { ok: false, status: "not_configured", message: "No API key configured." }
+      const { value: baseUrl } = resolveCredentialValue(row, "baseUrl", provider)
+      const { value: model } = resolveCredentialValue(row, "model", provider)
 
-      const result = await generateWithGemini("Reply with exactly the word OK.", "You are a connection test. Reply with exactly OK.", apiKey)
-      if (result.ok) return { ok: true, status: "connected", message: "Gemini responded successfully." }
+      if (spec.needsKey && !apiKey) {
+        return { ok: false, status: "not_configured", message: "No API key configured." }
+      }
+      if (provider === "ollama" && !baseUrl) {
+        return { ok: false, status: "not_configured", message: "Enter the server URL of your self-hosted model." }
+      }
+
+      const result = await generateWithLLM(
+        "Reply with exactly the word OK.",
+        "You are a connection test. Reply with exactly OK.",
+        { provider, apiKey: apiKey ?? null, baseUrl: baseUrl ?? null, model: model ?? null }
+      )
+      if (result.ok) {
+        return {
+          ok: true,
+          status: "connected",
+          message: `${spec.label} responded successfully${model ? ` (${model})` : ""}.`,
+        }
+      }
       return { ok: false, status: "error", message: result.reason }
     }
 

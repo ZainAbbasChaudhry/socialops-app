@@ -3,8 +3,10 @@ import { z } from "zod"
 import { requireAuth } from "@/lib/auth/guard"
 import { verifySameOrigin } from "@/lib/auth/csrf"
 import { getDashboardViewMode } from "@/lib/dashboard-view-mode"
-import { resolveActiveApiKey, resolveCredentialValue } from "@/lib/integrations/credential-resolution"
-import { generateChatWithGemini, type GeminiChatTurn, type GeminiFailureCode } from "@/lib/services/gemini-client"
+import { resolveCredentialValue } from "@/lib/integrations/credential-resolution"
+import { generateChatWithLLM } from "@/lib/services/llm"
+import { resolveLlm } from "@/lib/services/llm/resolve"
+import type { LlmChatTurn as GeminiChatTurn, LlmFailureCode as GeminiFailureCode } from "@/lib/services/llm/types"
 import { EASYLIFE_SYSTEM_PROMPT } from "@/lib/ai/easylife-system-prompt"
 import { apiError } from "@/lib/api/errors"
 
@@ -67,20 +69,23 @@ export async function POST(request: Request) {
     // crafted request can't claim "client" to reach a workspace's own key
     // it shouldn't, or claim "demo" to dodge workspace attribution.
     const viewMode = await getDashboardViewMode()
-    const apiKey =
+    const llm =
       viewMode === "client"
-        ? (await resolveActiveApiKey(auth.ctx.workspaceId, "gemini")).value
-        : // Demo Mode never uses (or requires) a workspace's own Gemini
-          // credential - it always runs on EasyLife's platform-configured
-          // key, so a demo visitor never has to configure anything first.
-          resolveCredentialValue(null, "apiKey", "gemini").value
+        ? await resolveLlm(auth.ctx.workspaceId, "complex")
+        : // Demo Mode never uses (or requires) a workspace's own credential -
+          // it always runs on EasyLife's platform-configured key, so a demo
+          // visitor never has to configure anything first.
+          (() => {
+            const platformKey = resolveCredentialValue(null, "apiKey", "gemini").value
+            return platformKey ? ({ provider: "gemini", apiKey: platformKey } as const) : null
+          })()
 
     const turns: GeminiChatTurn[] = body.messages.slice(-MAX_HISTORY_TURNS).map((m) => ({
       role: m.role === "assistant" ? "model" : "user",
       text: m.content,
     }))
 
-    const result = await generateChatWithGemini(turns, EASYLIFE_SYSTEM_PROMPT, apiKey)
+    const result = await generateChatWithLLM(turns, EASYLIFE_SYSTEM_PROMPT, llm)
 
     if (result.ok) {
       return NextResponse.json({ ok: true, text: result.text })

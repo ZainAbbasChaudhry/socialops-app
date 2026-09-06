@@ -11,7 +11,7 @@ import {
 } from "./repository"
 import type { WhatsAppTransport } from "./transport"
 import { runQualificationTurn, scoreQualification, type KnownQualification, type ConversationTurn } from "./gemini-qualification"
-import { resolveActiveApiKey } from "@/lib/integrations/credential-resolution"
+import { resolveLlm } from "@/lib/services/llm/resolve"
 import { dispatchAutomationEvent } from "@/lib/automations/engine"
 
 /** The bot's own ladder - the only stages it is allowed to move a lead
@@ -154,8 +154,11 @@ export async function processInboundMessage(msg: InboundTextMessage): Promise<{ 
     .filter((r) => r.body)
     .map((r) => ({ sender: r.direction === "inbound" ? "customer" : "bot", body: r.body as string }))
 
-  const { value: geminiApiKey } = await resolveActiveApiKey(msg.workspaceId, "gemini")
-  const turn = await runQualificationTurn(known, recentTurns, msg.body, geminiApiKey)
+  // The customer-facing turn: whichever model this workspace has activated,
+  // preferring a capable hosted one. This is the "complex" tier - it writes
+  // in the client's own name to their customer.
+  const llm = await resolveLlm(msg.workspaceId, "complex")
+  const turn = await runQualificationTurn(known, recentTurns, msg.body, llm)
   const mergedKnown: KnownQualification = { ...known, ...turn.extracted }
 
   const turnCount = recentRows.length + 1

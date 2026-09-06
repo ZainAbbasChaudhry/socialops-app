@@ -3,8 +3,8 @@ import { z } from "zod"
 import { requireAuth } from "@/lib/auth/guard"
 import { verifySameOrigin } from "@/lib/auth/csrf"
 import { apiError } from "@/lib/api/errors"
-import { resolveActiveApiKey } from "@/lib/integrations/credential-resolution"
-import { generateWithGemini } from "@/lib/services/gemini-client"
+import { resolveLlm } from "@/lib/services/llm/resolve"
+import { generateWithLLM } from "@/lib/services/llm"
 import {
   resolveGatewayContext,
   statusForGatewayFailure,
@@ -79,8 +79,8 @@ export async function POST(request: Request) {
           ? "Write the next message we should send. One message, ready to send."
           : (body.question ?? "What should I know about this conversation?")
 
-    const { value: apiKey } = await resolveActiveApiKey(workspaceId, "gemini")
-    const result = await generateWithGemini(`${instruction}\n\nConversation:\n${transcript}`, SYSTEM, apiKey)
+    const llm = await resolveLlm(workspaceId, "complex")
+    const result = await generateWithLLM(`${instruction}\n\nConversation:\n${transcript}`, SYSTEM, llm)
 
     if (!result.ok) {
       // Said plainly rather than dressed up as an answer: a made-up
@@ -90,7 +90,7 @@ export async function POST(request: Request) {
         {
           error:
             result.reason ||
-            "EasyLife AI is not available right now. Check the Gemini connection in Integrations.",
+            "EasyLife AI is not available right now. Check your AI model in Integrations.",
         },
         { status: 502 }
       )

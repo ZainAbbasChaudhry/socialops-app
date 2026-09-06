@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server"
 import { requireAuth } from "@/lib/auth/guard"
 import { verifySameOrigin } from "@/lib/auth/csrf"
-import { generateWithGemini } from "@/lib/services/gemini-client"
+import { generateWithLLM } from "@/lib/services/llm"
+import { resolveLlm } from "@/lib/services/llm/resolve"
 import { buildTemplateResponse } from "@/lib/services/ai-service"
-import { resolveActiveApiKey } from "@/lib/integrations/credential-resolution"
 import type { AiCapability } from "@/types"
 
 const SYSTEM_INSTRUCTION =
@@ -42,11 +42,13 @@ export async function POST(request: Request) {
   }
 
   const prompt = CAPABILITY_PROMPT[capability](input.trim() || "a new update")
-  const { value: apiKey } = await resolveActiveApiKey(auth.ctx.workspaceId, "gemini")
-  const result = await generateWithGemini(prompt, SYSTEM_INSTRUCTION, apiKey)
+  const llm = await resolveLlm(auth.ctx.workspaceId, "complex")
+  const result = await generateWithLLM(prompt, SYSTEM_INSTRUCTION, llm)
 
   if (result.ok) {
-    return NextResponse.json({ text: result.text, source: "gemini" })
+    // `source` names the model that actually answered, not a hardcoded
+    // "gemini" - a client running their own model should see that.
+    return NextResponse.json({ text: result.text, source: llm?.provider ?? "gemini" })
   }
 
   // Gemini unavailable for any reason (no billing, network, etc.) — never
