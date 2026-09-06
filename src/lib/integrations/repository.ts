@@ -151,6 +151,13 @@ export type IntegrationAuditAction =
    * can do, and "who turned bulk campaigns on for this client" is a question
    * that gets asked after something goes wrong, not before. */
   | "features_updated"
+  /** A bulk WhatsApp campaign was launched or cancelled. Recorded with the
+   * recipient COUNT and batch id only - never the message body or the
+   * numbers, which would turn an audit trail into a copy of the campaign
+   * list. "Who sent a campaign to how many people, and when" is what gets
+   * asked when a number is reported or banned. */
+  | "campaign_started"
+  | "campaign_cancelled"
 
 /** Never pass secret values in `metadata` — this is a durable log. */
 export async function recordAuditEvent(

@@ -5,6 +5,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ConnectionCard } from "@/components/whatsapp/connection-card"
 import { GatewayConnectionCard } from "@/components/whatsapp/gateway-connection-card"
 import { FeatureControlPanel } from "@/components/whatsapp/feature-control-panel"
+import { ContactsPanel } from "@/components/whatsapp/contacts-panel"
+import { GroupsPanel } from "@/components/whatsapp/groups-panel"
+import { CampaignsPanel } from "@/components/whatsapp/campaigns-panel"
 import { QrDemoConnectionCard } from "@/components/whatsapp/qr-demo-connection-card"
 import { QrLinkCard } from "@/components/whatsapp/qr-link-card"
 import { ChatbotDemo } from "@/components/whatsapp/chatbot-demo"
@@ -66,6 +69,9 @@ export function WhatsAppPageContent() {
           <TabsList className="max-w-full overflow-x-auto">
             <TabsTrigger value="connection">Connection</TabsTrigger>
             <TabsTrigger value="live">Live Conversations</TabsTrigger>
+            <TabsTrigger value="contacts">Contacts</TabsTrigger>
+            <TabsTrigger value="groups">Groups</TabsTrigger>
+            <TabsTrigger value="campaigns">Campaigns</TabsTrigger>
             <TabsTrigger value="capabilities">Capabilities</TabsTrigger>
             <TabsTrigger value="qr-demo">QR Demo</TabsTrigger>
           </TabsList>
@@ -83,6 +89,18 @@ export function WhatsAppPageContent() {
 
           <TabsContent value="live" className="pt-4">
             <LiveConversationsList />
+          </TabsContent>
+
+          <TabsContent value="contacts" className="pt-4">
+            <ContactsPanel />
+          </TabsContent>
+
+          <TabsContent value="groups" className="pt-4">
+            <GroupsPanel />
+          </TabsContent>
+
+          <TabsContent value="campaigns" className="pt-4">
+            <CampaignsPanel />
           </TabsContent>
 
           {/* Every WhatsApp capability EasyLife can grant this workspace.

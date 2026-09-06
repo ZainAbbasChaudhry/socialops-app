@@ -410,3 +410,313 @@ export async function testGateway(config: GatewayConfig): Promise<TestConnection
     message: "WhatsApp gateway reachable. Connect a number to start messaging.",
   }
 }
+
+// ---------------------------------------------------------------------------
+// Contacts
+// ---------------------------------------------------------------------------
+
+/**
+ * The gateway returns WhatsApp's own contact/group/label shapes, which differ
+ * between engines and versions. Everything below normalises to a small,
+ * stable EasyLife shape and treats every field as optional - a gateway that
+ * renames a field degrades to a missing name, never to a crash or, worse, a
+ * screen that silently shows the wrong contact.
+ */
+
+function str(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null
+}
+
+function pick(row: Record<string, unknown>, ...keys: string[]): string | null {
+  for (const key of keys) {
+    const found = str(row[key])
+    if (found) return found
+  }
+  return null
+}
+
+function asRows(data: unknown): Record<string, unknown>[] {
+  if (Array.isArray(data)) return data.filter((r): r is Record<string, unknown> => typeof r === "object" && r !== null)
+  if (data && typeof data === "object") {
+    for (const key of ["items", "data", "contacts", "groups", "labels", "chats", "results"]) {
+      const nested = (data as Record<string, unknown>)[key]
+      if (Array.isArray(nested)) return nested.filter((r): r is Record<string, unknown> => typeof r === "object" && r !== null)
+    }
+  }
+  return []
+}
+
+export interface WhatsAppContact {
+  id: string
+  name: string | null
+  phone: string | null
+  isBlocked: boolean
+  isBusiness: boolean
+}
+
+function toContact(row: Record<string, unknown>): WhatsAppContact | null {
+  const id = pick(row, "id", "jid", "contactId", "_serialized")
+  if (!id) return null
+  return {
+    id,
+    name: pick(row, "name", "pushname", "pushName", "notify", "verifiedName", "shortName"),
+    phone: pick(row, "number", "phone", "phoneNumber") ?? (id.includes("@") ? id.split("@")[0] : null),
+    isBlocked: row.isBlocked === true || row.blocked === true,
+    isBusiness: row.isBusiness === true || row.isEnterprise === true,
+  }
+}
+
+export async function listContacts(
+  config: GatewayConfig,
+  sessionId: string
+): Promise<GatewayResult<WhatsAppContact[]>> {
+  const result = await request<unknown>(config, {
+    method: "GET",
+    route: "GET /sessions/{id}/contacts",
+    path: `/sessions/${encodeSegment(sessionId)}/contacts`,
+    timeoutMs: LONG_TIMEOUT_MS,
+  })
+  if (!result.ok) return result
+  return { ok: true, data: asRows(result.data).map(toContact).filter((c): c is WhatsAppContact => c !== null) }
+}
+
+export async function listBlockedContacts(
+  config: GatewayConfig,
+  sessionId: string
+): Promise<GatewayResult<WhatsAppContact[]>> {
+  const result = await request<unknown>(config, {
+    method: "GET",
+    route: "GET /sessions/{id}/contacts/blocked",
+    path: `/sessions/${encodeSegment(sessionId)}/contacts/blocked`,
+  })
+  if (!result.ok) return result
+  return { ok: true, data: asRows(result.data).map(toContact).filter((c): c is WhatsAppContact => c !== null) }
+}
+
+/** Block and unblock are separate catalogue routes on purpose, so an admin
+ * can grant one without the other. */
+export async function setContactBlocked(
+  config: GatewayConfig,
+  sessionId: string,
+  contactId: string,
+  blocked: boolean
+): Promise<GatewayResult<unknown>> {
+  return request(config, {
+    method: blocked ? "POST" : "DELETE",
+    route: blocked
+      ? "POST /sessions/{id}/contacts/{contactId}/block"
+      : "DELETE /sessions/{id}/contacts/{contactId}/block",
+    path: `/sessions/${encodeSegment(sessionId)}/contacts/${encodeSegment(contactId)}/block`,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Groups
+// ---------------------------------------------------------------------------
+
+export interface WhatsAppGroup {
+  id: string
+  subject: string | null
+  description: string | null
+  participantCount: number | null
+  isAdmin: boolean
+}
+
+function toGroup(row: Record<string, unknown>): WhatsAppGroup | null {
+  const id = pick(row, "id", "jid", "groupId", "_serialized")
+  if (!id) return null
+  const participants = row.participants
+  return {
+    id,
+    subject: pick(row, "subject", "name", "title"),
+    description: pick(row, "description", "desc"),
+    participantCount: Array.isArray(participants)
+      ? participants.length
+      : typeof row.size === "number"
+        ? row.size
+        : null,
+    isAdmin: row.isAdmin === true || row.iAmAdmin === true,
+  }
+}
+
+export async function listGroups(config: GatewayConfig, sessionId: string): Promise<GatewayResult<WhatsAppGroup[]>> {
+  const result = await request<unknown>(config, {
+    method: "GET",
+    route: "GET /sessions/{id}/groups",
+    path: `/sessions/${encodeSegment(sessionId)}/groups`,
+    timeoutMs: LONG_TIMEOUT_MS,
+  })
+  if (!result.ok) return result
+  return { ok: true, data: asRows(result.data).map(toGroup).filter((g): g is WhatsAppGroup => g !== null) }
+}
+
+export async function createGroup(
+  config: GatewayConfig,
+  sessionId: string,
+  subject: string,
+  participants: string[]
+): Promise<GatewayResult<{ groupId: string | null }>> {
+  const result = await request<Record<string, unknown>>(config, {
+    method: "POST",
+    route: "POST /sessions/{id}/groups",
+    path: `/sessions/${encodeSegment(sessionId)}/groups`,
+    body: { subject, participants: participants.map((p) => p.replace(/[^\d]/g, "")) },
+  })
+  if (!result.ok) return result
+  return { ok: true, data: { groupId: pick(result.data, "id", "groupId", "jid") } }
+}
+
+export async function getGroupInviteCode(
+  config: GatewayConfig,
+  sessionId: string,
+  groupId: string
+): Promise<GatewayResult<{ inviteUrl: string | null }>> {
+  const result = await request<Record<string, unknown>>(config, {
+    method: "GET",
+    route: "GET /sessions/{id}/groups/{groupId}/invite-code",
+    path: `/sessions/${encodeSegment(sessionId)}/groups/${encodeSegment(groupId)}/invite-code`,
+  })
+  if (!result.ok) return result
+  const code = pick(result.data, "code", "inviteCode", "invite")
+  const url = pick(result.data, "url", "inviteUrl", "link")
+  return { ok: true, data: { inviteUrl: url ?? (code ? `https://chat.whatsapp.com/${code}` : null) } }
+}
+
+export async function leaveGroup(
+  config: GatewayConfig,
+  sessionId: string,
+  groupId: string
+): Promise<GatewayResult<unknown>> {
+  return request(config, {
+    method: "POST",
+    route: "POST /sessions/{id}/groups/{groupId}/leave",
+    path: `/sessions/${encodeSegment(sessionId)}/groups/${encodeSegment(groupId)}/leave`,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Labels
+// ---------------------------------------------------------------------------
+
+export interface WhatsAppLabel {
+  id: string
+  name: string | null
+  colour: string | null
+}
+
+function toLabel(row: Record<string, unknown>): WhatsAppLabel | null {
+  const id = pick(row, "id", "labelId")
+  if (!id) return null
+  return {
+    id,
+    name: pick(row, "name", "label", "title"),
+    colour: pick(row, "colorHex", "color", "hexColor"),
+  }
+}
+
+export async function listLabels(config: GatewayConfig, sessionId: string): Promise<GatewayResult<WhatsAppLabel[]>> {
+  const result = await request<unknown>(config, {
+    method: "GET",
+    route: "GET /sessions/{id}/labels",
+    path: `/sessions/${encodeSegment(sessionId)}/labels`,
+  })
+  if (!result.ok) return result
+  return { ok: true, data: asRows(result.data).map(toLabel).filter((l): l is WhatsAppLabel => l !== null) }
+}
+
+export async function setChatLabel(
+  config: GatewayConfig,
+  sessionId: string,
+  chatId: string,
+  labelId: string,
+  attach: boolean
+): Promise<GatewayResult<unknown>> {
+  if (attach) {
+    return request(config, {
+      method: "POST",
+      route: "POST /sessions/{id}/labels/chat/{chatId}",
+      path: `/sessions/${encodeSegment(sessionId)}/labels/chat/${encodeSegment(chatId)}`,
+      body: { labelId },
+    })
+  }
+  return request(config, {
+    method: "DELETE",
+    route: "DELETE /sessions/{id}/labels/chat/{chatId}/{labelId}",
+    path: `/sessions/${encodeSegment(sessionId)}/labels/chat/${encodeSegment(chatId)}/${encodeSegment(labelId)}`,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Bulk campaigns
+// ---------------------------------------------------------------------------
+
+export interface BatchStatus {
+  batchId: string
+  state: string | null
+  total: number | null
+  sent: number | null
+  failed: number | null
+}
+
+function toBatch(row: Record<string, unknown>, fallbackId: string): BatchStatus {
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null)
+  return {
+    batchId: pick(row, "batchId", "id") ?? fallbackId,
+    state: pick(row, "status", "state"),
+    total: num(row.total) ?? num(row.count),
+    sent: num(row.sent) ?? num(row.delivered) ?? num(row.succeeded),
+    failed: num(row.failed) ?? num(row.errors),
+  }
+}
+
+/**
+ * Starts a bulk send.
+ *
+ * The gateway owns pacing and delivery; EasyLife's job is to hand it a clean
+ * list and then report only what the gateway says came back. Nothing here
+ * counts a message as sent - `getBatchStatus` does, from the gateway's own
+ * numbers - because a campaign screen that inflates its own totals is worse
+ * than one that shows nothing.
+ */
+export async function sendBulkMessages(
+  config: GatewayConfig,
+  sessionId: string,
+  recipients: string[],
+  text: string
+): Promise<GatewayResult<{ batchId: string | null }>> {
+  const result = await request<Record<string, unknown>>(config, {
+    method: "POST",
+    route: "POST /sessions/{id}/messages/send-bulk",
+    path: `/sessions/${encodeSegment(sessionId)}/messages/send-bulk`,
+    body: { recipients: recipients.map((r) => r.replace(/[^\d]/g, "")), text },
+    timeoutMs: LONG_TIMEOUT_MS,
+  })
+  if (!result.ok) return result
+  return { ok: true, data: { batchId: pick(result.data, "batchId", "id", "jobId") } }
+}
+
+export async function getBatchStatus(
+  config: GatewayConfig,
+  sessionId: string,
+  batchId: string
+): Promise<GatewayResult<BatchStatus>> {
+  const result = await request<Record<string, unknown>>(config, {
+    method: "GET",
+    route: "GET /sessions/{id}/messages/batch/{batchId}",
+    path: `/sessions/${encodeSegment(sessionId)}/messages/batch/${encodeSegment(batchId)}`,
+  })
+  if (!result.ok) return result
+  return { ok: true, data: toBatch(result.data, batchId) }
+}
+
+export async function cancelBatch(
+  config: GatewayConfig,
+  sessionId: string,
+  batchId: string
+): Promise<GatewayResult<unknown>> {
+  return request(config, {
+    method: "POST",
+    route: "POST /sessions/{id}/messages/batch/{batchId}/cancel",
+    path: `/sessions/${encodeSegment(sessionId)}/messages/batch/${encodeSegment(batchId)}/cancel`,
+  })
+}
