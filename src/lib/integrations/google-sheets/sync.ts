@@ -4,6 +4,7 @@ import { resolveCredentialValue } from "@/lib/integrations/service"
 import { getGoogleSheetsSelection } from "@/lib/platform/google-sheets-selection"
 import { getSyncedRow, recordSyncResult } from "@/lib/platform/google-sheets-sync"
 import { getLead } from "@/lib/leads/repository"
+import { listMeetings, type Meeting } from "@/lib/platform/meetings"
 import { appendRow, updateRow } from "./client"
 import { SHEET_FIELD_KEYS, DEFAULT_COLUMN_MAPPING, type SheetFieldKey } from "./fields"
 
@@ -16,7 +17,22 @@ import { SHEET_FIELD_KEYS, DEFAULT_COLUMN_MAPPING, type SheetFieldKey } from "./
  */
 export { SHEET_FIELD_KEYS, type SheetFieldKey }
 
-function fieldValue(lead: Lead, key: SheetFieldKey): string {
+/** The meeting a client would want to see on the row: the next one still
+ * scheduled, or failing that the most recent. A meeting Google refused is
+ * never shown as if it were booked - it has status "failed" and no start
+ * time worth printing, so it is skipped entirely. */
+function relevantMeeting(all: Meeting[]): Meeting | null {
+  const booked = all.filter((m) => m.status === "scheduled" && m.externalEventId)
+  if (booked.length === 0) return null
+  const now = Date.now()
+  const upcoming = booked
+    .filter((m) => new Date(m.startTime).getTime() >= now)
+    .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
+  if (upcoming[0]) return upcoming[0]
+  return booked.sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime())[0] ?? null
+}
+
+function fieldValue(lead: Lead, key: SheetFieldKey, meeting: Meeting | null): string {
   switch (key) {
     case "name":
       return lead.name
@@ -38,6 +54,21 @@ function fieldValue(lead: Lead, key: SheetFieldKey): string {
       return lead.nextFollowUpAt ?? ""
     case "updated_at":
       return lead.updatedAt
+    case "meeting_time":
+      // Written in the meeting's own timezone, because a client reading
+      // their spreadsheet wants the time they will actually turn up at.
+      return meeting
+        ? new Intl.DateTimeFormat("en-GB", {
+            timeZone: meeting.timezone,
+            dateStyle: "medium",
+            timeStyle: "short",
+          }).format(new Date(meeting.startTime))
+        : ""
+    case "meeting_link":
+      // Only ever a link the provider actually returned.
+      return meeting?.meetLink ?? meeting?.eventUrl ?? ""
+    case "last_interaction":
+      return lead.lastInteractionAt
   }
 }
 
@@ -59,7 +90,7 @@ function columnLetterToIndex(letter: string): number {
  * workspace that has customized mapping and deliberately left a field out
  * (to disable it) would otherwise see it silently reappear from the
  * default merge, which defeats the point of disabling it. */
-function buildRowValues(lead: Lead, columnMapping: Record<string, string>): string[] {
+function buildRowValues(lead: Lead, columnMapping: Record<string, string>, meeting: Meeting | null): string[] {
   const mapping: Record<string, string> = Object.keys(columnMapping).length > 0 ? columnMapping : DEFAULT_COLUMN_MAPPING
   let width = 0
   const cells: Record<number, string> = {}
@@ -68,7 +99,7 @@ function buildRowValues(lead: Lead, columnMapping: Record<string, string>): stri
     if (!letter) continue
     const index = columnLetterToIndex(letter)
     if (index < 0) continue
-    cells[index] = fieldValue(lead, key)
+    cells[index] = fieldValue(lead, key, meeting)
     width = Math.max(width, index + 1)
   }
   return Array.from({ length: width }, (_, i) => cells[i] ?? "")
@@ -96,7 +127,8 @@ export async function syncLeadToSheet(workspaceId: string, leadId: string): Prom
   const lead = await getLead(workspaceId, leadId)
   if (!lead) return { status: "failed", errorMessage: "Lead not found." }
 
-  const values = buildRowValues(lead, selection.columnMapping)
+  const meeting = relevantMeeting(await listMeetings(workspaceId, leadId))
+  const values = buildRowValues(lead, selection.columnMapping, meeting)
   const existing = await getSyncedRow(workspaceId, leadId, selection.spreadsheetId, selection.worksheetName)
 
   if (existing) {

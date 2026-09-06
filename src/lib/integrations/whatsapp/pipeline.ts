@@ -16,6 +16,7 @@ import { resolveLlm } from "@/lib/services/llm/resolve"
 import { findAvailableSlots, describeSlot } from "@/lib/meetings/availability"
 import { bookMeeting } from "@/lib/integrations/google-calendar/booking"
 import { dispatchAutomationEvent } from "@/lib/automations/engine"
+import { syncLeadToSheet } from "@/lib/integrations/google-sheets/sync"
 
 /** The bot's own ladder - the only stages it is allowed to move a lead
  * into. Ranking is done against the canonical LEAD_STAGE_ORDER, never
@@ -295,6 +296,9 @@ export async function processInboundMessage(msg: InboundTextMessage): Promise<{ 
     // Leave a human-set status alone; the score still updates underneath it.
     status: HUMAN_OWNED_STATUSES.includes(lead.status as LeadIntentStatus) ? undefined : band.status,
     callPermission: scoreResult.callPermission,
+    // This turn IS the interaction - without this the field kept the value
+    // it was given the day the lead was created.
+    lastInteractionAt: new Date(),
   })
 
   if (bookingEscalation) {
@@ -345,6 +349,20 @@ export async function processInboundMessage(msg: InboundTextMessage): Promise<{ 
     sendResult.externalMessageId ?? null,
     sendResult.ok ? "sent" : "failed"
   )
+
+  // Mirror the lead into the workspace's spreadsheet, if they have chosen
+  // one. Best effort by design: a spreadsheet that is unreachable, or a
+  // Google token that has expired, must never cost the customer their
+  // reply - the reply has already been sent by this point, and Postgres
+  // remains the source of truth either way. The sync is idempotent, so
+  // running it on every turn keeps the sheet current without ever
+  // producing a second row for the same lead.
+  try {
+    await syncLeadToSheet(msg.workspaceId, leadId)
+  } catch {
+    // Deliberately swallowed, and deliberately not logged with any of the
+    // customer's content.
+  }
 
   await updateConversation(msg.workspaceId, conversation.id, {
     botState: { ...mergedKnown, booking: nextBooking } as Record<string, unknown>,

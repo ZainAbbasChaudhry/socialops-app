@@ -186,6 +186,11 @@ export interface UpdateLeadInput {
   nextFollowUpAt?: string | null
   notes?: string
   tags?: string[]
+  /** Set when the update is itself a contact with the lead - an inbound
+   * WhatsApp message, a call, a reply. It was previously only ever written
+   * at creation, so "last interaction" on a conversation months old still
+   * showed the day the lead first appeared. */
+  lastInteractionAt?: Date
 }
 
 /** Applies a patch inside a transaction and writes matching Lead Activity

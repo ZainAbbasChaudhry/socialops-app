@@ -5,7 +5,21 @@
  * server-only modules (DB client, leads repository) that can't reach the
  * browser bundle.
  */
-export const SHEET_FIELD_KEYS = ["name", "phone", "email", "company", "service", "source", "lead_score", "status", "next_action", "updated_at"] as const
+export const SHEET_FIELD_KEYS = [
+  "name",
+  "phone",
+  "email",
+  "company",
+  "service",
+  "source",
+  "lead_score",
+  "status",
+  "next_action",
+  "updated_at",
+  "meeting_time",
+  "meeting_link",
+  "last_interaction",
+] as const
 export type SheetFieldKey = (typeof SHEET_FIELD_KEYS)[number]
 
 export const DEFAULT_COLUMN_MAPPING: Record<SheetFieldKey, string> = {
@@ -19,6 +33,12 @@ export const DEFAULT_COLUMN_MAPPING: Record<SheetFieldKey, string> = {
   status: "H",
   next_action: "I",
   updated_at: "J",
+  // Appended after the original ten, never inserted among them: an
+  // existing sheet already has data under A-J, and shifting a column would
+  // silently rewrite a client's spreadsheet.
+  meeting_time: "K",
+  meeting_link: "L",
+  last_interaction: "M",
 }
 
 export const SHEET_FIELD_LABELS: Record<SheetFieldKey, string> = {
@@ -32,6 +52,9 @@ export const SHEET_FIELD_LABELS: Record<SheetFieldKey, string> = {
   status: "Status",
   next_action: "Next follow-up",
   updated_at: "Last updated",
+  meeting_time: "Meeting booked for",
+  meeting_link: "Meeting link",
+  last_interaction: "Last interaction",
 }
 
 /** Only "name" is required - every other field can be left out of a
