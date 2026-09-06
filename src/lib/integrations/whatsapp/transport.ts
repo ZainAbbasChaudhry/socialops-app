@@ -64,7 +64,14 @@ export type ResolveTransportResult =
  * redeploys.
  */
 export function deriveSessionId(workspaceId: string): string {
-  return `ws_${createHash("sha256").update(`easylife:whatsapp:${workspaceId}`).digest("hex").slice(0, 32)}`
+  // Hyphen, not underscore: OpenWA validates session names against
+  // /^[a-zA-Z0-9-]+$/ and rejects anything else with a bare 400. The
+  // underscore this used to produce meant EVERY session creation failed
+  // against a real gateway - invisible until one was actually running,
+  // because a stub will accept any name you give it.
+  //
+  // "ws-" + 32 hex = 35 characters, inside OpenWA's 3-50 range.
+  return `ws-${createHash("sha256").update(`easylife:whatsapp:${workspaceId}`).digest("hex").slice(0, 32)}`
 }
 
 /** The NAME EasyLife gives a workspace's session on the gateway. The gateway

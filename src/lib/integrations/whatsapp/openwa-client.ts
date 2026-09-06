@@ -125,18 +125,47 @@ export interface SessionState {
 
 /** The gateway reports a richer set of states than EasyLife's screens need;
  * they collapse to the five the connection card actually renders. */
+/**
+ * Maps the gateway's session state onto the five states EasyLife shows.
+ *
+ * The first group of names in each line is OpenWA's own enum
+ * (`SessionStatus` in its session entity): created, initializing, qr_ready,
+ * authenticating, ready, disconnected, action_required, failed. The rest are
+ * names used by other gateways and older versions, kept because they cost
+ * nothing and a gateway upgrade that renames one should not silently break
+ * the connect screen.
+ *
+ * Anything unrecognised falls to "disconnected" - the safe answer, because
+ * showing "connected" for a state we do not understand would be a lie. That
+ * default is also how `qr_ready` used to be reported: the QR was sitting
+ * ready on the gateway while EasyLife said "Not connected" and never fetched
+ * it, since it only asks for a QR when it believes one is waiting.
+ */
 function coerceStatus(raw: unknown): SessionStatus {
   const value = String(raw ?? "").toUpperCase()
-  if (value === "WORKING" || value === "CONNECTED" || value === "AUTHENTICATED") return "connected"
-  if (value === "SCAN_QR_CODE" || value === "QR" || value === "PAIRING") return "qr"
-  if (value === "STARTING" || value === "CONNECTING" || value === "INITIALIZING") return "connecting"
-  if (value === "FAILED" || value === "ERROR") return "error"
+  if (value === "READY" || value === "WORKING" || value === "CONNECTED" || value === "AUTHENTICATED") return "connected"
+  if (value === "QR_READY" || value === "SCAN_QR_CODE" || value === "QR" || value === "PAIRING") return "qr"
+  if (
+    value === "INITIALIZING" ||
+    value === "AUTHENTICATING" ||
+    value === "CREATED" ||
+    value === "STARTING" ||
+    value === "CONNECTING"
+  ) {
+    return "connecting"
+  }
+  // ACTION_REQUIRED means the gateway needs a human - a restriction, a
+  // re-pair. That is a problem to surface, not a quiet "disconnected".
+  if (value === "FAILED" || value === "ERROR" || value === "ACTION_REQUIRED") return "error"
   return "disconnected"
 }
 
 function coerceState(data: Record<string, unknown>): SessionState {
   const me = data.me as Record<string, unknown> | undefined
+  // OpenWA reports the linked number as `phone`; other gateways use
+  // `phoneNumber` or only expose it inside `me.id` as a JID.
   const number =
+    (typeof data.phone === "string" && data.phone) ||
     (typeof data.phoneNumber === "string" && data.phoneNumber) ||
     (typeof me?.id === "string" ? me.id.split("@")[0].split(":")[0] : null)
   return {
