@@ -97,6 +97,18 @@ async function dispatchCallHandler(job: ClaimedJob): Promise<void> {
 
   const call = await getCall(job.workspaceId, callId)
   if (!call) throw new NonRetryableJobError(`Call ${callId} not found in this workspace`)
+
+  // Jobs are at-least-once: a worker that dies between "OmniDimension
+  // accepted the call" and "we wrote that down" gets retried. Without this
+  // guard the retry places a SECOND real phone call to the lead - the
+  // provider is billed twice and, worse, a person's phone rings twice for no
+  // reason. A call that already has a provider id is done; there is nothing
+  // left for this job to do.
+  const ALREADY_PLACED = ["dispatched", "in-progress", "completed"] as const
+  if (call.providerCallId || (ALREADY_PLACED as readonly string[]).includes(call.status)) {
+    return
+  }
+
   const toNumber = job.payload.toNumber as string
   if (!toNumber) throw new NonRetryableJobError("dispatch_call job is missing toNumber")
 
@@ -573,6 +585,19 @@ async function publishPostHandler(job: ClaimedJob): Promise<void> {
   if (!target) throw new NonRetryableJobError(`Post target ${targetId} not found`)
 
   if (!isProviderId(target.provider)) throw new NonRetryableJobError(`Unknown provider: ${target.provider}`)
+
+  // Same at-least-once hazard as dispatch_call, with the same shape: if the
+  // network call succeeded and the worker died before `markPostTargetResult`,
+  // retrying posts a SECOND copy to the client's real page or profile.
+  //
+  // "processing" is included deliberately: Instagram and TikTok publish
+  // asynchronously and their own poll handlers finish the job, so restarting
+  // publication here would create a second media container, not resume the
+  // first.
+  if (target.externalPostId || target.status === "published" || target.status === "processing") {
+    await recomputePostStatus(target.workspaceId, target.postId)
+    return
+  }
 
   if (target.provider === "instagram") {
     const result = await publishToInstagram(target)

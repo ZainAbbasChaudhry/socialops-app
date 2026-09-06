@@ -72,10 +72,27 @@ export interface ClaimedJob {
   maxAttempts: number
 }
 
-/** Atomically claims and locks up to `limit` pending, due jobs for this
- * worker. Uses a raw query (rather than the query builder) specifically for
- * `FOR UPDATE SKIP LOCKED`, which Drizzle's builder doesn't expose cleanly
- * combined with a correlated subquery + row lock. */
+/**
+ * How long a worker may hold a job before another worker may take it over.
+ *
+ * This is a crash-recovery lease, not a timeout: a worker that dies mid-job
+ * (container recycled, deploy, OOM) leaves the row at status 'running' with
+ * nobody working on it. Nothing else would ever move it, so before this the
+ * job was stuck forever - `locked_at`/`locked_by` were written on every claim
+ * and then never read by anything.
+ *
+ * It must be comfortably LONGER than the slowest legitimate job, because a
+ * lease that expires while a worker is still running means the job runs
+ * twice. Fifteen minutes is far past anything in `handlers.ts` (the longest
+ * are provider API calls with their own much shorter timeouts).
+ */
+const LEASE_MINUTES = 15
+
+/** Atomically claims and locks up to `limit` due jobs for this worker -
+ * pending ones, plus any whose lease has expired because the worker holding
+ * them died. Uses a raw query (rather than the query builder) specifically
+ * for `FOR UPDATE SKIP LOCKED`, which Drizzle's builder doesn't expose
+ * cleanly combined with a correlated subquery + row lock. */
 export async function claimJobs(workerId: string, limit = 5): Promise<ClaimedJob[]> {
   const pool = getPool()
   const client = await pool.connect()
@@ -86,13 +103,20 @@ export async function claimJobs(workerId: string, limit = 5): Promise<ClaimedJob
        SET status = 'running', locked_at = now(), locked_by = $1, attempts = attempts + 1, updated_at = now()
        WHERE id IN (
          SELECT id FROM socialops.jobs
-         WHERE status = 'pending' AND available_at <= now()
+         WHERE (status = 'pending' AND available_at <= now())
+            -- A job left 'running' by a worker that died. Taking it over
+            -- costs an attempt, exactly as a crash should, so a job that
+            -- keeps killing its worker exhausts its attempts and stops
+            -- instead of cycling forever.
+            OR (status = 'running' AND locked_at IS NOT NULL
+                AND locked_at < now() - ($3 || ' minutes')::interval
+                AND attempts < max_attempts)
          ORDER BY available_at
          LIMIT $2
          FOR UPDATE SKIP LOCKED
        )
        RETURNING id, workspace_id, type, payload, attempts, max_attempts`,
-      [workerId, limit]
+      [workerId, limit, String(LEASE_MINUTES)]
     )
     await client.query("COMMIT")
     return rows.map((r) => ({
@@ -109,6 +133,33 @@ export async function claimJobs(workerId: string, limit = 5): Promise<ClaimedJob
   } finally {
     client.release()
   }
+}
+
+/**
+ * Fails jobs whose lease expired and whose attempts are exhausted.
+ *
+ * `claimJobs` deliberately refuses to retake those - otherwise a job that
+ * kills its worker every time would cycle forever - which would leave them
+ * sitting at 'running' looking active. This gives them the honest ending:
+ * permanently failed, with a reason that says what actually happened rather
+ * than a provider error that never occurred.
+ *
+ * Returns how many it closed, so the worker can report it.
+ */
+export async function expireDeadJobs(): Promise<number> {
+  const pool = getPool()
+  const { rowCount } = await pool.query(
+    `UPDATE socialops.jobs
+     SET status = 'failed',
+         last_error = 'Worker stopped responding; no attempts left.',
+         updated_at = now()
+     WHERE status = 'running'
+       AND locked_at IS NOT NULL
+       AND locked_at < now() - ($1 || ' minutes')::interval
+       AND attempts >= max_attempts`,
+    [String(LEASE_MINUTES)]
+  )
+  return rowCount ?? 0
 }
 
 export async function completeJob(id: string): Promise<void> {

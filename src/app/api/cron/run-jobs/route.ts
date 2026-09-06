@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { NextResponse } from "next/server"
-import { claimJobs, completeJob, failJob, NonRetryableJobError, type JobType } from "@/lib/jobs/queue"
+import { claimJobs, completeJob, expireDeadJobs, failJob, NonRetryableJobError, type JobType } from "@/lib/jobs/queue"
 import { JOB_HANDLERS } from "@/lib/jobs/handlers"
 import { pruneExpiredOAuthStates, scheduleTokenRefreshes } from "@/lib/integrations/oauth"
 import { checkScheduledAutomations } from "@/lib/automations/engine"
@@ -26,6 +26,12 @@ export async function POST(request: Request) {
 
   try {
     const workerId = `web-${randomUUID().slice(0, 8)}`
+
+    // Close out jobs abandoned by a worker that died and have no attempts
+    // left, BEFORE claiming - so they stop appearing as if work is in
+    // progress. Jobs that still have attempts are simply re-claimed below.
+    const expiredJobs = await expireDeadJobs()
+
     const batch = await claimJobs(workerId, 5)
 
     const results = await Promise.all(
@@ -53,6 +59,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       claimed: batch.length,
+      expiredJobs,
       results,
       prunedOAuthStates: prunedStates,
       scheduledRefreshes,

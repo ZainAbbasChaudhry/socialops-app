@@ -113,6 +113,17 @@ export async function dispatchAutomationEvent(triggerType: AutomationTriggerType
       messageBody: context.messageBody,
       sentiment: context.sentiment,
       score: context.score,
+      // Carried so a manual-approval run can still reply into the SAME
+      // WhatsApp conversation when a human approves it minutes or hours
+      // later. Without this the approve path had no conversation to reply
+      // in, so "send a WhatsApp reply" behind manual approval could never
+      // complete - it was blocked every single time, which looked like a
+      // provider problem rather than missing context.
+      //
+      // Safe to persist: it is a phone number, an account id and a
+      // conversation id. No credentials - those are resolved from the
+      // account at send time.
+      whatsapp: context.whatsapp,
     }
 
     if (!conditionPasses(automation, context)) {
@@ -203,6 +214,25 @@ export async function checkScheduledAutomations(): Promise<number> {
  * human-in-the-loop counterpart to the automatic path above. Re-derives
  * the automation and re-checks everything the automatic path would have
  * (nothing here trusts that "pending" alone means still valid to run). */
+/** Rebuilds the WhatsApp reply context from a stored run.
+ *
+ * The value comes back from JSONB, so every field is checked rather than
+ * cast: a half-written context would otherwise reach the transport layer as
+ * `undefined` ids and fail somewhere far less obvious than here. */
+function whatsappContextFrom(triggerContext: Record<string, unknown> | null): WhatsAppReplyContext | undefined {
+  const raw = triggerContext?.whatsapp
+  if (!raw || typeof raw !== "object") return undefined
+  const candidate = raw as Record<string, unknown>
+  const toNumber = typeof candidate.toNumber === "string" ? candidate.toNumber : null
+  const accountId = typeof candidate.accountId === "string" ? candidate.accountId : null
+  if (!toNumber || !accountId) return undefined
+  return {
+    toNumber,
+    accountId,
+    conversationId: typeof candidate.conversationId === "string" ? candidate.conversationId : undefined,
+  }
+}
+
 export async function approveAutomationRun(
   workspaceId: string,
   automation: Automation,
@@ -213,6 +243,10 @@ export async function approveAutomationRun(
     workspaceId,
     actorUserId,
     leadId: typeof triggerContext?.leadId === "string" ? triggerContext.leadId : undefined,
+    // The approve path must be able to do everything the automatic path
+    // could. Anything dropped here becomes an action that silently only
+    // works without human approval.
+    whatsapp: whatsappContextFrom(triggerContext),
   }
   return executeAction(automation.action.type, automation.action.value, actionCtx)
 }

@@ -579,6 +579,10 @@ export interface Call {
   id: string
   leadId: string
   status: CallStatus
+  /** The provider's own id for this call, once it has accepted one. Its
+   * presence is the proof the call was actually placed - job retries check
+   * it so a worker crash can never dial the same person twice. */
+  providerCallId?: string
   startedAt?: string
   endedAt?: string
   durationSeconds?: number

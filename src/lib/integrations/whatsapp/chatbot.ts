@@ -148,13 +148,20 @@ export function classifyChatbotLead(state: ChatbotState, fullTranscript: string,
   const intent = classifyLeadIntent(fullTranscript)
   const { collected } = state
 
+  // Same correction as the Gemini path: the positive end of each signal has
+  // to reach the top of its range, or the Hot Lead band (86+) can never be
+  // awarded. Unknown and negative values are unchanged.
   const factors: LeadScoreFactors = {
-    buyingIntent: collected.wantsCall ? 85 : intent === "interested" || intent === "qualified" ? 65 : 35,
-    budget: collected.budget ? 70 : 30,
-    urgency: collected.timeline ? 65 : 30,
-    serviceMatch: collected.serviceInterested ? 75 : 30,
+    buyingIntent: collected.wantsCall ? 100 : intent === "interested" || intent === "qualified" ? 65 : 35,
+    budget: collected.budget ? 90 : 30,
+    urgency: collected.timeline ? 90 : 30,
+    serviceMatch: collected.serviceInterested ? 90 : 30,
+    // This flow never asks who decides, so this stays neutral rather than
+    // guessing. It is the one factor holding a perfect chatbot lead below a
+    // perfect Gemini-qualified one, which is the honest ordering: the
+    // chatbot genuinely knows less.
     decisionAuthority: 55,
-    willingnessToMeet: collected.wantsCall === true ? 95 : collected.wantsCall === false ? 15 : 40,
+    willingnessToMeet: collected.wantsCall === true ? 100 : collected.wantsCall === false ? 15 : 40,
     sentiment: intent === "not-interested" || intent === "spam" ? 10 : 70,
     engagement: Math.min(100, state.turns * 15),
   }

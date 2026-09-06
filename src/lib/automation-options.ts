@@ -1,14 +1,27 @@
 import type { AutomationActionType, AutomationConditionType, AutomationTriggerType } from "@/types"
 
-export const TRIGGER_OPTIONS: { value: AutomationTriggerType; label: string; needsValue?: boolean }[] = [
+export const TRIGGER_OPTIONS: {
+  value: AutomationTriggerType
+  label: string
+  needsValue?: boolean
+  /** What the value IS, so the builder renders the right control. A
+   * scheduled automation's value is a datetime the engine parses with
+   * Date.parse - typing that by hand into a text box is a trap, so the
+   * builder gives it a datetime picker. */
+  valueKind?: "text" | "number" | "datetime"
+  valueHint?: string
+}[] = [
   { value: "new-dm", label: "New social DM" },
   { value: "new-comment", label: "New comment received" },
-  { value: "keyword", label: "Keyword mentioned", needsValue: true },
-  { value: "scheduled", label: "Scheduled event" },
+  { value: "keyword", label: "Keyword mentioned", needsValue: true, valueKind: "text", valueHint: "Keyword to watch for" },
+  // Without needsValue the builder never showed an input, so every scheduled
+  // automation was saved with no time - and the engine skips those. They sat
+  // in the list looking active and could never fire.
+  { value: "scheduled", label: "Scheduled event", needsValue: true, valueKind: "datetime", valueHint: "When it should run" },
   { value: "lead-intent-detected", label: "Interested lead detected" },
   { value: "whatsapp-started", label: "WhatsApp conversation started" },
   { value: "whatsapp-lead-qualified", label: "WhatsApp lead qualified" },
-  { value: "lead-score-above", label: "Lead score above threshold", needsValue: true },
+  { value: "lead-score-above", label: "Lead score above threshold", needsValue: true, valueKind: "number", valueHint: "Score to cross, e.g. 70" },
   { value: "call-permission-received", label: "Call permission received" },
   { value: "call-completed", label: "AI call completed" },
   { value: "no-answer", label: "Call: no answer" },

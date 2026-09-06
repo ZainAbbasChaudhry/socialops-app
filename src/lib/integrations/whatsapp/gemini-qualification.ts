@@ -196,13 +196,27 @@ export interface QualificationScoreResult {
  * 0-100 score itself is computed by the same weighted formula the rest of
  * the CRM uses, not an opaque number the model invents. */
 export function scoreQualification(known: KnownQualification, turnCount: number, escalated: boolean): QualificationScoreResult {
+  // Every factor is 0-100 and the bands go up to "Hot Lead" at 86, so the
+  // positive end of each signal has to actually REACH the top of its range.
+  // It previously did not: the best possible lead - wants a call, has a
+  // budget, a timeline, a named service, is the decision maker, and has been
+  // talking for a dozen turns - scored 78, which made the Hot Lead band
+  // unreachable and, worse, invisible: nothing errored, the top of the funnel
+  // simply never appeared.
+  //
+  // Only the positive end moved. An unknown or negative signal scores exactly
+  // what it did before, so cold and warm leads are unaffected.
   const factors: LeadScoreFactors = {
-    buyingIntent: known.wantsCall ? 85 : escalated ? 70 : known.requirement ? 55 : 30,
-    budget: known.budget ? 70 : 30,
-    urgency: known.timeline ? 65 : 30,
-    serviceMatch: known.serviceInterested ? 75 : 30,
-    decisionAuthority: known.decisionMaker === "yes" ? 80 : known.decisionMaker === "no" ? 25 : 50,
-    willingnessToMeet: known.wantsCall === true ? 95 : known.wantsCall === false ? 20 : 40,
+    buyingIntent: known.wantsCall ? 100 : escalated ? 75 : known.requirement ? 60 : 30,
+    budget: known.budget ? 90 : 30,
+    urgency: known.timeline ? 90 : 30,
+    serviceMatch: known.serviceInterested ? 90 : 30,
+    decisionAuthority: known.decisionMaker === "yes" ? 100 : known.decisionMaker === "no" ? 25 : 50,
+    willingnessToMeet: known.wantsCall === true ? 100 : known.wantsCall === false ? 20 : 40,
+    // Nothing in this path measures sentiment - the qualification turn does
+    // not return one - so it sits neutral rather than pretending to. It is
+    // deliberately NOT scored high: a constant that reached 100 would hand
+    // every lead six free points.
     sentiment: 65,
     engagement: Math.min(100, turnCount * 12),
   }

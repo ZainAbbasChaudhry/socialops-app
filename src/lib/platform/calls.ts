@@ -11,6 +11,7 @@ function rowToCall(row: typeof calls.$inferSelect): Call {
     id: row.id,
     leadId: row.leadId ?? "",
     status: row.status as CallStatus,
+    providerCallId: row.providerCallId ?? undefined,
     startedAt: row.startedAt?.toISOString(),
     endedAt: row.endedAt?.toISOString(),
     durationSeconds: row.durationSeconds ?? undefined,

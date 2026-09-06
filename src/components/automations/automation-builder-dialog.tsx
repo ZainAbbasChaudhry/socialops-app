@@ -86,10 +86,29 @@ export function AutomationBuilderDialog({ onCreated }: AutomationBuilderDialogPr
         ? `: "${actionValue}"`
         : ""
 
+    // A datetime-local input yields "2026-09-06T14:30" with no zone. The
+    // engine parses the stored value with Date.parse on the SERVER, which
+    // would read that as the server's local time, not the person's - so the
+    // wall-clock time they picked is converted to an absolute instant here,
+    // in their own browser, where the offset is actually known.
+    const normalisedTriggerValue =
+      triggerOption?.valueKind === "datetime" && triggerValue
+        ? (() => {
+            const parsed = new Date(triggerValue)
+            return Number.isNaN(parsed.getTime()) ? triggerValue : parsed.toISOString()
+          })()
+        : triggerValue
+
     const trigger = {
       type: triggerType,
-      label: labelFor(TRIGGER_OPTIONS, triggerType) + (triggerValue ? `: "${triggerValue}"` : ""),
-      value: triggerValue || undefined,
+      label:
+        labelFor(TRIGGER_OPTIONS, triggerType) +
+        (triggerValue
+          ? triggerOption?.valueKind === "datetime"
+            ? `: ${new Date(triggerValue).toLocaleString()}`
+            : `: "${triggerValue}"`
+          : ""),
+      value: normalisedTriggerValue || undefined,
     }
     const condition = {
       type: conditionType,
@@ -148,7 +167,8 @@ export function AutomationBuilderDialog({ onCreated }: AutomationBuilderDialogPr
     }
   }
 
-  const triggerNeedsValue = TRIGGER_OPTIONS.find((o) => o.value === triggerType)?.needsValue
+  const triggerOption = TRIGGER_OPTIONS.find((o) => o.value === triggerType)
+  const triggerNeedsValue = triggerOption?.needsValue
   const conditionNeedsValue = CONDITION_OPTIONS.find((o) => o.value === conditionType)?.needsValue
   const actionNeedsValue = ACTION_OPTIONS.find((o) => o.value === actionType)?.needsValue
 
@@ -218,9 +238,16 @@ export function AutomationBuilderDialog({ onCreated }: AutomationBuilderDialogPr
             </StepRow>
             {triggerNeedsValue && (
               <Input
+                type={
+                  triggerOption?.valueKind === "datetime"
+                    ? "datetime-local"
+                    : triggerOption?.valueKind === "number"
+                      ? "number"
+                      : "text"
+                }
                 value={triggerValue}
                 onChange={(event) => setTriggerValue(event.target.value)}
-                placeholder="Keyword…"
+                placeholder={triggerOption?.valueHint ?? "Value…"}
                 className="h-8"
               />
             )}
@@ -370,7 +397,10 @@ export function AutomationBuilderDialog({ onCreated }: AutomationBuilderDialogPr
           {error && <p className="text-sm text-destructive">{error}</p>}
 
           <DialogFooter>
-            <Button type="submit" disabled={!name.trim() || saving}>
+            {/* A trigger that needs a value and hasn't got one saves an
+                automation that can never fire - which is exactly how every
+                scheduled automation used to end up. Blocked here instead. */}
+            <Button type="submit" disabled={!name.trim() || saving || (triggerNeedsValue && !triggerValue.trim())}>
               {saving ? "Saving..." : "Save automation"}
             </Button>
           </DialogFooter>
