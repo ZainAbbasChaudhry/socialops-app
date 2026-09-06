@@ -1,5 +1,6 @@
 "use client"
 
+import * as React from "react"
 import { MessageCircle, Target } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ConnectionCard } from "@/components/whatsapp/connection-card"
@@ -8,6 +9,7 @@ import { FeatureControlPanel } from "@/components/whatsapp/feature-control-panel
 import { ContactsPanel } from "@/components/whatsapp/contacts-panel"
 import { GroupsPanel } from "@/components/whatsapp/groups-panel"
 import { CampaignsPanel } from "@/components/whatsapp/campaigns-panel"
+import { WhatsAppInbox } from "@/components/whatsapp/whatsapp-inbox"
 import { QrDemoConnectionCard } from "@/components/whatsapp/qr-demo-connection-card"
 import { QrLinkCard } from "@/components/whatsapp/qr-link-card"
 import { ChatbotDemo } from "@/components/whatsapp/chatbot-demo"
@@ -22,6 +24,30 @@ import { useDashboardViewMode } from "@/lib/dashboard-view-mode-context"
 
 export function WhatsAppPageContent() {
   const { mode } = useDashboardViewMode()
+  // Once a number is linked, the WhatsApp workspace IS the page - the two
+  // headline counters are a stand-in for having nothing connected yet, and
+  // keeping them above a live inbox just pushes the client's actual work
+  // below the fold. The counters stay reachable on the Leads screen.
+  const [linked, setLinked] = React.useState(false)
+
+  React.useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch("/api/whatsapp/session")
+        const json = await res.json()
+        if (!cancelled && res.ok) setLinked(json?.session?.status === "connected")
+      } catch {
+        /* not linked, or EasyLife unreachable - the page falls back to the
+           counters and the Connection tab, which is where you would go to
+           fix either. */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const { leads } = useLeads()
   const whatsappLeads = leads.filter((l) => l.whatsappNumber)
   const qualifiedIndex = LEAD_STAGE_ORDER.indexOf("qualified")
@@ -39,7 +65,10 @@ export function WhatsAppPageContent() {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:max-w-sm">
+      {/* The live inbox replaces the counters as soon as a number is linked. */}
+      {linked && mode === "client" && <WhatsAppInbox />}
+
+      <div className={`grid grid-cols-2 gap-3 sm:max-w-sm${linked && mode === "client" ? " hidden" : ""}`}>
         <div className="flex items-center gap-2.5 rounded-xl bg-card px-3.5 py-3 shadow-[0_1px_2px_rgba(0,0,0,0.04)] ring-1 ring-foreground/10 transition-shadow duration-200 hover:shadow-[0_4px_12px_rgba(0,0,0,0.06)]">
           <MessageCircle className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
           <div className="flex min-w-0 flex-col">

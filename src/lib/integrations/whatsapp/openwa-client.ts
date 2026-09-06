@@ -773,3 +773,167 @@ export async function cancelBatch(
     path: `/sessions/${encodeSegment(sessionId)}/messages/batch/${encodeSegment(batchId)}/cancel`,
   })
 }
+
+// ---------------------------------------------------------------------------
+// Chats and conversation history
+// ---------------------------------------------------------------------------
+
+/**
+ * WhatsApp's own chat list, as the inbox screen shows it.
+ *
+ * `kind` matters: the gateway returns status broadcasts and newsletters in
+ * the same list as real conversations, and they must not appear as chats
+ * someone can reply in.
+ */
+export interface WhatsAppChat {
+  id: string
+  name: string | null
+  isGroup: boolean
+  kind: string
+  unreadCount: number
+  lastMessage: string | null
+  /** Unix seconds, as WhatsApp reports it. */
+  timestamp: number | null
+  archived: boolean
+  pinned: boolean
+  muted: boolean
+  favourite: boolean
+}
+
+function toChat(row: Record<string, unknown>): WhatsAppChat | null {
+  const id = pick(row, "id", "chatId", "jid")
+  if (!id) return null
+  const count = typeof row.unreadCount === "number" ? row.unreadCount : 0
+  return {
+    id,
+    name: pick(row, "name", "subject", "pushName", "notify"),
+    isGroup: row.isGroup === true || id.endsWith("@g.us"),
+    kind: pick(row, "kind", "type") ?? (id.endsWith("@g.us") ? "group" : "individual"),
+    unreadCount: count > 0 ? count : 0,
+    lastMessage: pick(row, "lastMessage", "lastMessageBody"),
+    timestamp: typeof row.timestamp === "number" ? row.timestamp : null,
+    archived: row.archived === true || row.isArchived === true,
+    pinned: row.pinned === true || row.isPinned === true,
+    muted: row.muted === true || row.isMuted === true,
+    favourite: row.favourite === true || row.isFavourite === true || row.starred === true,
+  }
+}
+
+export async function listChats(config: GatewayConfig, sessionId: string): Promise<GatewayResult<WhatsAppChat[]>> {
+  const result = await request<unknown>(config, {
+    method: "GET",
+    route: "GET /sessions/{id}/chats",
+    path: `/sessions/${encodeSegment(sessionId)}/chats`,
+    timeoutMs: LONG_TIMEOUT_MS,
+  })
+  if (!result.ok) return result
+  return { ok: true, data: asRows(result.data).map(toChat).filter((c): c is WhatsAppChat => c !== null) }
+}
+
+export interface WhatsAppChatMessage {
+  id: string
+  chatId: string
+  body: string | null
+  type: string
+  /** "in" for the customer, "out" for the linked number. */
+  direction: "in" | "out"
+  timestamp: number | null
+  status: string | null
+  authorName: string | null
+  hasMedia: boolean
+}
+
+function toChatMessage(row: Record<string, unknown>): WhatsAppChatMessage | null {
+  const id = pick(row, "waMessageId", "id", "messageId")
+  const chatId = pick(row, "chatId", "chat", "from")
+  if (!id || !chatId) return null
+  const dir = pick(row, "direction") ?? ""
+  return {
+    id,
+    chatId,
+    body: pick(row, "body", "text", "caption"),
+    type: pick(row, "type") ?? "text",
+    // The gateway says "incoming"/"outgoing"; `fromMe` is the fallback for
+    // engines that only report that.
+    direction: dir.startsWith("out") || row.fromMe === true ? "out" : "in",
+    timestamp: typeof row.timestamp === "number" ? row.timestamp : null,
+    status: pick(row, "status"),
+    authorName: pick(row, "authorName", "pushName", "chatName"),
+    hasMedia: Boolean(pick(row, "mediaPath", "mediaUrl", "mediaMimetype")),
+  }
+}
+
+/**
+ * One conversation's messages, newest last.
+ *
+ * The gateway keeps its own copy of the thread (it syncs history when a
+ * number is linked), so this reads from there rather than from EasyLife's
+ * `whatsapp_messages`, which only holds what arrived after linking.
+ */
+export async function listChatMessages(
+  config: GatewayConfig,
+  sessionId: string,
+  chatId: string,
+  limit = 50
+): Promise<GatewayResult<WhatsAppChatMessage[]>> {
+  const result = await request<unknown>(config, {
+    method: "GET",
+    route: "GET /sessions/{id}/messages",
+    path: `/sessions/${encodeSegment(sessionId)}/messages?chatId=${encodeSegment(chatId)}&limit=${Math.min(200, Math.max(1, limit))}`,
+    timeoutMs: LONG_TIMEOUT_MS,
+  })
+  if (!result.ok) return result
+  const rows = asRows(
+    result.data && typeof result.data === "object" && "messages" in (result.data as object)
+      ? (result.data as { messages: unknown }).messages
+      : result.data
+  )
+  const messages = rows.map(toChatMessage).filter((m): m is WhatsAppChatMessage => m !== null)
+  // Oldest first, so the conversation reads top to bottom.
+  return { ok: true, data: messages.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0)) }
+}
+
+export interface WhatsAppStatusUpdate {
+  id: string
+  contactName: string | null
+  contactId: string | null
+  type: string
+  caption: string | null
+  timestamp: number | null
+}
+
+export async function listStatusUpdates(
+  config: GatewayConfig,
+  sessionId: string
+): Promise<GatewayResult<WhatsAppStatusUpdate[]>> {
+  const result = await request<unknown>(config, {
+    method: "GET",
+    route: "GET /sessions/{id}/status",
+    path: `/sessions/${encodeSegment(sessionId)}/status`,
+    timeoutMs: LONG_TIMEOUT_MS,
+  })
+  if (!result.ok) return result
+  const rows = asRows(
+    result.data && typeof result.data === "object" && "statuses" in (result.data as object)
+      ? (result.data as { statuses: unknown }).statuses
+      : result.data
+  )
+  return {
+    ok: true,
+    data: rows
+      .map((row): WhatsAppStatusUpdate | null => {
+        const id = pick(row, "id")
+        if (!id) return null
+        const contact = (row.contact ?? {}) as Record<string, unknown>
+        return {
+          id,
+          contactName: pick(contact, "name", "pushName"),
+          contactId: pick(contact, "id"),
+          type: pick(row, "type") ?? "text",
+          caption: pick(row, "caption", "body"),
+          timestamp: typeof row.timestamp === "number" ? row.timestamp : null,
+        }
+      })
+      .filter((s): s is WhatsAppStatusUpdate => s !== null),
+  }
+}
