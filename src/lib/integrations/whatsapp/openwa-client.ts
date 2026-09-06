@@ -312,6 +312,27 @@ function extractMessageId(data: Record<string, unknown>): string | undefined {
 }
 
 /**
+ * WhatsApp addresses a chat by JID - `<number>@c.us` for a person,
+ * `<id>@g.us` for a group - and OpenWA's send endpoints take that JID as
+ * `chatId`. EasyLife stores plain digits, because a JID is a protocol detail
+ * that has no business being the phone number a salesperson reads in the CRM.
+ *
+ * This is the one place the two representations meet. A value that is already
+ * a JID passes through untouched (so group sends work); digits become a
+ * personal JID.
+ */
+function toChatId(recipient: string): string {
+  const trimmed = recipient.trim()
+  if (trimmed.includes("@")) return trimmed
+  return `${trimmed.replace(/\D/g, "")}@c.us`
+}
+
+/** The inverse: the digits EasyLife stores and displays. */
+export function phoneFromChatId(chatId: string): string {
+  return chatId.split("@")[0].split(":")[0].replace(/\D/g, "")
+}
+
+/**
  * Sends a text message.
  *
  * `ok: true` means WhatsApp assigned the message an id - it reached WhatsApp's
@@ -329,7 +350,10 @@ export async function sendTextMessage(
     method: "POST",
     route: "POST /sessions/{id}/messages/send-text",
     path: `/sessions/${encodeSegment(sessionId)}/messages/send-text`,
-    body: { to: to.replace(/[^\d]/g, ""), text: body },
+    // OpenWA's field is `chatId` and it wants a full JID. Sending `to` with
+    // bare digits - which is what this did - was rejected outright, so every
+    // bot reply was recorded as failed while the message itself never left.
+    body: { chatId: toChatId(to), text: body },
   })
 
   if (!result.ok) return { ok: false, errorMessage: result.errorMessage }
@@ -363,7 +387,7 @@ export async function sendMediaMessage(
     method: "POST",
     route: spec.route,
     path: `/sessions/${encodeSegment(sessionId)}/messages/${spec.segment}`,
-    body: { to: to.replace(/[^\d]/g, ""), ...media },
+    body: { chatId: toChatId(to), ...media },
     // Media uploads legitimately take longer than a text send.
     timeoutMs: LONG_TIMEOUT_MS,
   })
@@ -717,7 +741,7 @@ export async function sendBulkMessages(
     method: "POST",
     route: "POST /sessions/{id}/messages/send-bulk",
     path: `/sessions/${encodeSegment(sessionId)}/messages/send-bulk`,
-    body: { recipients: recipients.map((r) => r.replace(/[^\d]/g, "")), text },
+    body: { recipients: recipients.map(toChatId), text },
     timeoutMs: LONG_TIMEOUT_MS,
   })
   if (!result.ok) return result

@@ -8,6 +8,7 @@ import {
 } from "@/lib/integrations/whatsapp/repository"
 import { processInboundMessage } from "@/lib/integrations/whatsapp/pipeline"
 import { openWaTransport, resolveOpenWaConfig } from "@/lib/integrations/whatsapp/transport"
+import { phoneFromChatId } from "@/lib/integrations/whatsapp/openwa-client"
 import {
   recordWebhookEvent,
   markWebhookEventProcessed,
@@ -182,12 +183,27 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true })
   }
 
+  // Nor is a group. A group message would create a "lead" whose phone number
+  // is a group id, which no salesperson can ever call back.
+  if (message.isGroup) {
+    return NextResponse.json({ ok: true })
+  }
+
+  // WhatsApp addresses senders by JID (`923001234567@c.us`). The CRM stores
+  // the phone number a person can actually read and dial; the JID is rebuilt
+  // at send time. Storing it raw put "923446242066@c.us" in the lead's phone
+  // field.
+  const fromPhone = phoneFromChatId(message.from)
+  if (!fromPhone) {
+    return NextResponse.json({ ok: true })
+  }
+
   const event = await recordWebhookEvent({
     provider: "openwa",
     workspaceId: account.workspaceId,
     externalEventId: message.id,
     eventType: message.type ?? "text",
-    payloadSummary: { from: message.from, type: message.type ?? "text" },
+    payloadSummary: { from: fromPhone, type: message.type ?? "text" },
   })
   if (!event) return NextResponse.json({ ok: true }) // already delivered
 
@@ -202,12 +218,12 @@ export async function POST(request: Request) {
       workspaceId: account.workspaceId,
       accountId: account.id,
       transport: openWaTransport(config, account.sessionId),
-      from: message.from,
+      from: fromPhone,
       contactName: message.pushName ?? null,
       externalMessageId: message.id,
       messageType: message.type ?? "text",
       body: (message.type ?? "text") === "text" ? (message.body ?? message.text ?? null) : null,
-      rawMetadata: { from: message.from, type: message.type ?? "text", timestamp: message.timestamp ?? null },
+      rawMetadata: { from: fromPhone, chatId: message.from, type: message.type ?? "text", timestamp: message.timestamp ?? null },
     })
     await markWebhookEventProcessed(event.id)
   } catch (error) {
