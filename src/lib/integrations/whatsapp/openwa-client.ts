@@ -380,7 +380,9 @@ export async function sendMediaMessage(
   sessionId: string,
   kind: MediaKind,
   to: string,
-  media: { url?: string; base64?: string; filename?: string; caption?: string }
+  // `mimetype` is not optional in practice: OpenWA requires it whenever the
+  // media arrives as base64, and omitting it is rejected.
+  media: { url?: string; base64?: string; mimetype?: string; filename?: string; caption?: string }
 ): Promise<SendResult> {
   const spec = MEDIA_ROUTES[kind]
   const result = await request<Record<string, unknown>>(config, {
@@ -936,4 +938,170 @@ export async function listStatusUpdates(
       })
       .filter((s): s is WhatsAppStatusUpdate => s !== null),
   }
+}
+
+// ---------------------------------------------------------------------------
+// Media, and the message actions WhatsApp users expect
+// ---------------------------------------------------------------------------
+
+/** What the gateway holds for one media message. `data` is base64 - media
+ * never touches the browser except through EasyLife, so a client cannot be
+ * handed a gateway URL that would leak the API key. */
+export interface MediaPayload {
+  base64: string
+  mimeType: string
+  filename: string | null
+}
+
+export async function downloadMessageMedia(
+  config: GatewayConfig,
+  sessionId: string,
+  chatId: string,
+  messageId: string
+): Promise<GatewayResult<MediaPayload>> {
+  const gate = checkRouteAllowed(config.features, "GET /sessions/{id}/messages/{chatId}/{messageId}/media")
+  if (!gate.allowed) return { ok: false, errorMessage: gate.reason, blocked: true }
+
+  // Not routed through `request`: the gateway answers with raw bytes, not
+  // JSON, so this reads the body as a buffer instead of parsing it.
+  const url = `${normalizeBaseUrl(config.baseUrl)}/sessions/${encodeSegment(sessionId)}/messages/${encodeSegment(
+    chatId
+  )}/${encodeSegment(messageId)}/media`
+  try {
+    const res = await fetch(url, {
+      headers: { "X-API-Key": config.apiKey },
+      signal: AbortSignal.timeout(LONG_TIMEOUT_MS),
+    })
+    if (!res.ok) {
+      const message =
+        res.status === 404
+          ? "This message's media isn't stored on the gateway."
+          : `WhatsApp gateway returned ${res.status}`
+      return { ok: false, errorMessage: message, status: res.status }
+    }
+    const mimeType = res.headers.get("content-type")?.split(";")[0] ?? "application/octet-stream"
+    const disposition = res.headers.get("content-disposition") ?? ""
+    const nameMatch = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition)
+    const buffer = Buffer.from(await res.arrayBuffer())
+    return {
+      ok: true,
+      data: { base64: buffer.toString("base64"), mimeType, filename: nameMatch ? decodeURIComponent(nameMatch[1]) : null },
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      return { ok: false, errorMessage: "The WhatsApp gateway timed out fetching that media." }
+    }
+    return { ok: false, errorMessage: "Couldn't fetch that media from the WhatsApp gateway." }
+  }
+}
+
+/**
+ * Converts an uploaded audio file into the Ogg/Opus form WhatsApp shows as a
+ * voice note.
+ *
+ * Without this a recording arrives as an audio *attachment* - a file with a
+ * download button - rather than the mic bubble people expect, and on some
+ * clients it will not play at all. The gateway does the conversion because it
+ * has ffmpeg; EasyLife would otherwise need it too.
+ */
+export async function convertToVoiceNote(
+  config: GatewayConfig,
+  sessionId: string,
+  base64: string,
+  mimeType: string
+): Promise<GatewayResult<{ base64: string; mimeType: string }>> {
+  const result = await request<Record<string, unknown>>(config, {
+    method: "POST",
+    route: "POST /sessions/{id}/media/convert/voice",
+    path: `/sessions/${encodeSegment(sessionId)}/media/convert/voice`,
+    body: { base64, mimetype: mimeType },
+    timeoutMs: LONG_TIMEOUT_MS,
+  })
+  if (!result.ok) return result
+  const data = pick(result.data, "base64", "data")
+  if (!data) return { ok: false, errorMessage: "The gateway converted the audio but returned nothing." }
+  return { ok: true, data: { base64: data, mimeType: pick(result.data, "mimetype", "mimeType") ?? "audio/ogg" } }
+}
+
+/** Forwards an existing message to another chat. */
+export async function forwardMessage(
+  config: GatewayConfig,
+  sessionId: string,
+  fromChatId: string,
+  messageId: string,
+  toChatId: string
+): Promise<GatewayResult<unknown>> {
+  return request(config, {
+    method: "POST",
+    route: "POST /sessions/{id}/messages/forward",
+    path: `/sessions/${encodeSegment(sessionId)}/messages/forward`,
+    // OpenWA names these `fromChatId`/`toChatId`, not `chatId` - sending the
+    // wrong one is a bare 400 with no hint which field it meant.
+    body: { fromChatId, toChatId, messageId },
+  })
+}
+
+export async function starMessage(
+  config: GatewayConfig,
+  sessionId: string,
+  chatId: string,
+  messageId: string,
+  starred: boolean
+): Promise<GatewayResult<unknown>> {
+  return request(config, {
+    method: "POST",
+    route: "POST /sessions/{id}/messages/star",
+    path: `/sessions/${encodeSegment(sessionId)}/messages/star`,
+    body: { chatId, messageId, star: starred },
+  })
+}
+
+export async function reactToMessage(
+  config: GatewayConfig,
+  sessionId: string,
+  chatId: string,
+  messageId: string,
+  emoji: string
+): Promise<GatewayResult<unknown>> {
+  return request(config, {
+    method: "POST",
+    route: "POST /sessions/{id}/messages/react",
+    path: `/sessions/${encodeSegment(sessionId)}/messages/react`,
+    // An empty string is how WhatsApp removes a reaction.
+    body: { chatId, messageId, emoji },
+  })
+}
+
+/** Replies quoting an earlier message, so the customer sees what it answers. */
+export async function replyToMessage(
+  config: GatewayConfig,
+  sessionId: string,
+  chatId: string,
+  quotedMessageId: string,
+  text: string
+): Promise<SendResult> {
+  const result = await request<Record<string, unknown>>(config, {
+    method: "POST",
+    route: "POST /sessions/{id}/messages/reply",
+    path: `/sessions/${encodeSegment(sessionId)}/messages/reply`,
+    body: { chatId, messageId: quotedMessageId, text },
+  })
+  if (!result.ok) return { ok: false, errorMessage: result.errorMessage }
+  const id = extractMessageId(result.data)
+  if (!id) return { ok: false, errorMessage: "The gateway accepted the reply but WhatsApp returned no message id." }
+  return { ok: true, externalMessageId: id }
+}
+
+/** Marks a conversation read, so the unread badge matches the phone. */
+export async function markChatRead(
+  config: GatewayConfig,
+  sessionId: string,
+  chatId: string
+): Promise<GatewayResult<unknown>> {
+  return request(config, {
+    method: "POST",
+    route: "POST /sessions/{id}/chats/read",
+    path: `/sessions/${encodeSegment(sessionId)}/chats/read`,
+    body: { chatId },
+  })
 }
