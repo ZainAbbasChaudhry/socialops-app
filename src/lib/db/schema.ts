@@ -505,3 +505,18 @@ export const meetings = socialops.table("meetings", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 })
+
+export const knowledgeEntries = socialops.table("knowledge_entries", {
+  id: uuid("id").primaryKey(),
+  workspaceId: uuid("workspace_id").notNull(),
+  kind: text("kind").notNull().default("faq"),
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  price: text("price"),
+  keywords: text("keywords").array().notNull().default([]),
+  active: boolean("active").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  updatedBy: uuid("updated_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+})

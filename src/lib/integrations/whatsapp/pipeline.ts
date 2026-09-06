@@ -11,6 +11,7 @@ import {
 } from "./repository"
 import type { WhatsAppTransport } from "./transport"
 import { runQualificationTurn, scoreQualification, type KnownQualification, type ConversationTurn } from "./gemini-qualification"
+import { listActiveKnowledgeEntries } from "@/lib/knowledge/repository"
 import { resolveLlm } from "@/lib/services/llm/resolve"
 import { dispatchAutomationEvent } from "@/lib/automations/engine"
 
@@ -156,9 +157,15 @@ export async function processInboundMessage(msg: InboundTextMessage): Promise<{ 
 
   // The customer-facing turn: whichever model this workspace has activated,
   // preferring a capable hosted one. This is the "complex" tier - it writes
-  // in the client's own name to their customer.
-  const llm = await resolveLlm(msg.workspaceId, "complex")
-  const turn = await runQualificationTurn(known, recentTurns, msg.body, llm)
+  // in the client's own name to their customer. Alongside it, the client's
+  // own answers, loaded per turn so an edit in the Knowledge Base screen
+  // changes what the bot says on the very next message rather than after a
+  // restart.
+  const [llm, knowledge] = await Promise.all([
+    resolveLlm(msg.workspaceId, "complex"),
+    listActiveKnowledgeEntries(msg.workspaceId),
+  ])
+  const turn = await runQualificationTurn(known, recentTurns, msg.body, llm, knowledge)
   const mergedKnown: KnownQualification = { ...known, ...turn.extracted }
 
   const turnCount = recentRows.length + 1

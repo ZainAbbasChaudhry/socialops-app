@@ -9,6 +9,7 @@ import { FeatureControlPanel } from "@/components/whatsapp/feature-control-panel
 import { ContactsPanel } from "@/components/whatsapp/contacts-panel"
 import { GroupsPanel } from "@/components/whatsapp/groups-panel"
 import { CampaignsPanel } from "@/components/whatsapp/campaigns-panel"
+import { KnowledgeBasePanel } from "@/components/whatsapp/knowledge-base-panel"
 import { WhatsAppInbox } from "@/components/whatsapp/whatsapp-inbox"
 import { QrDemoConnectionCard } from "@/components/whatsapp/qr-demo-connection-card"
 import { QrLinkCard } from "@/components/whatsapp/qr-link-card"
@@ -101,6 +102,7 @@ export function WhatsAppPageContent() {
             <TabsTrigger value="contacts">Contacts</TabsTrigger>
             <TabsTrigger value="groups">Groups</TabsTrigger>
             <TabsTrigger value="campaigns">Campaigns</TabsTrigger>
+            <TabsTrigger value="knowledge">Knowledge Base</TabsTrigger>
             <TabsTrigger value="capabilities">Capabilities</TabsTrigger>
             <TabsTrigger value="qr-demo">QR Demo</TabsTrigger>
           </TabsList>
@@ -130,6 +132,12 @@ export function WhatsAppPageContent() {
 
           <TabsContent value="campaigns" className="pt-4">
             <CampaignsPanel />
+          </TabsContent>
+
+          {/* What the bot is allowed to say. Without this the qualification
+              bot can only ask questions - it has nothing to answer from. */}
+          <TabsContent value="knowledge" className="pt-4">
+            <KnowledgeBasePanel />
           </TabsContent>
 
           {/* Every WhatsApp capability EasyLife can grant this workspace.
