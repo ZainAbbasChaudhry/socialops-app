@@ -90,6 +90,12 @@ export interface CreateEventInput {
   timeZone: string
   attendeeEmails: string[]
   createMeetLink: boolean
+  /** Minutes before the start at which Google should remind everyone. Left
+   * unset the event inherits the calendar's defaults, which for a meeting
+   * booked by a bot on the client's behalf is not good enough - the client
+   * should be reminded whether or not their calendar happens to be
+   * configured for it. */
+  reminderMinutes?: number[]
 }
 
 export interface EventResult {
@@ -122,6 +128,12 @@ export async function createEvent(accessToken: string, input: CreateEventInput):
     }
     if (input.createMeetLink) {
       body.conferenceData = { createRequest: { requestId: randomUUID(), conferenceSolutionKey: { type: "hangoutsMeet" } } }
+    }
+    if (input.reminderMinutes?.length) {
+      body.reminders = {
+        useDefault: false,
+        overrides: input.reminderMinutes.map((minutes) => ({ method: "popup", minutes })),
+      }
     }
 
     const res = await fetch(url.toString(), {

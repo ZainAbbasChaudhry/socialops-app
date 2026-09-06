@@ -13,6 +13,8 @@ import type { WhatsAppTransport } from "./transport"
 import { runQualificationTurn, scoreQualification, type KnownQualification, type ConversationTurn } from "./gemini-qualification"
 import { listActiveKnowledgeEntries } from "@/lib/knowledge/repository"
 import { resolveLlm } from "@/lib/services/llm/resolve"
+import { findAvailableSlots, describeSlot } from "@/lib/meetings/availability"
+import { bookMeeting } from "@/lib/integrations/google-calendar/booking"
 import { dispatchAutomationEvent } from "@/lib/automations/engine"
 
 /** The bot's own ladder - the only stages it is allowed to move a lead
@@ -23,6 +25,25 @@ import { dispatchAutomationEvent } from "@/lib/automations/engine"
  * "earlier than anything" and reset the lead. A won deal replying "thanks,
  * when do we start?" was silently dragged back to `interested`. */
 const BOT_STAGES: LeadStage[] = ["whatsapp-started", "qualifying", "interested", "qualified", "ready-for-sales"]
+
+/**
+ * What the bot remembers about arranging a call, kept beside the
+ * qualification facts rather than inside them: an ISO timestamp is not a
+ * thing to show the model as "known so far", and mixing the two once meant
+ * the transcript summary was half machine-readable.
+ */
+interface BookingState {
+  /** Times put to the customer, in the order they were offered. */
+  offeredSlots?: string[]
+  /** The business's calendar timezone, so a slot offered on Monday still
+   * reads as Monday when the customer replies from another country. */
+  timezone?: string
+  /** Set only once Google has actually accepted the event. */
+  meetingId?: string
+  bookedFor?: string
+}
+
+type BotState = KnownQualification & { booking?: BookingState }
 
 /** Stages the bot must never touch: a human (or a closed deal) owns the
  * lead from here on. */
@@ -149,7 +170,9 @@ export async function processInboundMessage(msg: InboundTextMessage): Promise<{ 
     return { duplicate: false }
   }
 
-  const known = (conversation.botState ?? {}) as KnownQualification
+  const state = (conversation.botState ?? {}) as BotState
+  const known = state as KnownQualification
+  const booking = state.booking ?? {}
   const recentRows = await listMessages(msg.workspaceId, conversation.id, 12)
   const recentTurns: ConversationTurn[] = recentRows
     .filter((r) => r.body)
@@ -165,14 +188,98 @@ export async function processInboundMessage(msg: InboundTextMessage): Promise<{ 
     resolveLlm(msg.workspaceId, "complex"),
     listActiveKnowledgeEntries(msg.workspaceId),
   ])
-  const turn = await runQualificationTurn(known, recentTurns, msg.body, llm, knowledge)
+  // Times already put to this customer. Anything they accept has to come
+  // from here, so the bot can never promise an hour the calendar has not
+  // actually offered.
+  const offeredIso = booking.meetingId ? [] : (booking.offeredSlots ?? [])
+  const offeredLabels = offeredIso.map((iso) => describeSlot(iso, booking.timezone ?? "UTC"))
+
+  const turn = await runQualificationTurn(known, recentTurns, msg.body, llm, knowledge, offeredLabels)
   const mergedKnown: KnownQualification = { ...known, ...turn.extracted }
+
+  // ---- Meetings ---------------------------------------------------------
+  //
+  // Two steps, never merged: offer real times, then book the one accepted.
+  // Both are driven by the calendar rather than by the model - the model
+  // only ever picks a number out of a list this code produced, and the
+  // confirmation sentence is written here, from what Google actually
+  // returned, not by the model. That is what keeps "your meeting is booked"
+  // from ever being a sentence nobody can back up.
+  let replyText = turn.reply
+  let nextBooking: BookingState = booking
+  let bookingEscalation: string | null = null
+
+  if (turn.chosenSlot && offeredIso[turn.chosenSlot - 1]) {
+    const startIso = offeredIso[turn.chosenSlot - 1]
+    const endIso = new Date(new Date(startIso).getTime() + 30 * 60_000).toISOString()
+    const result = await bookMeeting({
+      workspaceId: msg.workspaceId,
+      leadId,
+      title: `Call with ${mergedKnown.name ?? lead.name ?? "WhatsApp lead"}`,
+      description: mergedKnown.requirement ?? mergedKnown.serviceInterested ?? "Booked from a WhatsApp conversation.",
+      startTime: startIso,
+      endTime: endIso,
+      // Only a real email gets an invite. There is no point inventing one,
+      // and Google rejects a malformed address for the whole event.
+      attendeeEmails: lead.email ? [lead.email] : [],
+      createdByUserId: null,
+    })
+
+    if (result.status === "booked") {
+      const when = describeSlot(startIso, booking.timezone ?? "UTC")
+      const meetLink = result.meeting?.meetLink
+      replyText = `${replyText}\n\nBooked — ${when}.${meetLink ? ` Here is the link: ${meetLink}` : ""}`
+      nextBooking = { meetingId: result.meeting?.id, bookedFor: startIso, timezone: booking.timezone }
+      await createActivity(msg.workspaceId, leadId, null, "meeting-booked", `Meeting booked from WhatsApp for ${when}`)
+    } else {
+      // The calendar refused or could not be reached. The customer is told
+      // the truth and a human is brought in - the one thing that must never
+      // happen here is telling them it is booked.
+      // Replaced, not appended. The model was told a time was being booked
+      // and may well have written "Booked!" already - appending a correction
+      // to a false claim leaves the false claim in the message.
+      replyText = "I could not confirm that time just now — someone from our team will confirm with you shortly."
+      bookingEscalation = result.errorMessage ?? "Calendar booking failed."
+      nextBooking = { ...booking, offeredSlots: [] }
+      await createActivity(
+        msg.workspaceId,
+        leadId,
+        null,
+        "qualification-updated",
+        `Could not book the requested meeting: ${bookingEscalation}`
+      )
+    }
+  } else if (turn.claimedSlot && !booking.meetingId) {
+    // The model picked a slot we cannot honour - out of range, or none were
+    // ever offered. Nothing is booked, and since its reply was written in
+    // the belief that something was, the reply itself cannot be trusted and
+    // is replaced rather than sent.
+    replyText = "Let me confirm a time with the team and come straight back to you."
+    bookingEscalation = "The assistant accepted a meeting time that was never offered."
+    nextBooking = { ...booking, offeredSlots: [] }
+  } else if (mergedKnown.wantsCall === true && !booking.meetingId && offeredIso.length === 0) {
+    const availability = await findAvailableSlots(msg.workspaceId)
+    if (availability.ok && availability.slots.length > 0) {
+      const lines = availability.slots.map((iso, i) => `${i + 1}. ${describeSlot(iso, availability.timezone)}`)
+      replyText = `${replyText}\n\nHere are the next free times — reply with the number that suits you:\n${lines.join("\n")}`
+      nextBooking = { offeredSlots: availability.slots, timezone: availability.timezone }
+    } else {
+      // No calendar, or nothing free. The customer still gets a straight
+      // answer, and a human picks it up rather than the thread going quiet.
+      replyText = `${replyText}\n\nSomeone from our team will call you to fix a time.`
+      bookingEscalation = availability.reason ?? "No calendar availability."
+    }
+  }
 
   const turnCount = recentRows.length + 1
   const scoreResult = scoreQualification(mergedKnown, turnCount, turn.escalate)
   const band = bandForScore(scoreResult.score)
   const currentStage: LeadStage = (lead.stage as LeadStage) ?? "whatsapp-started"
-  const targetStage = nextStage(currentStage, scoreResult.score, turn.escalate)
+  // A confirmed booking is a fact about the lead, not a score: it moves the
+  // stage directly, and "meeting-booked" is one of the stages the bot then
+  // stops touching, so the following turns cannot walk it back.
+  const bookedNow = nextBooking.meetingId !== undefined && booking.meetingId === undefined
+  const targetStage: LeadStage = bookedNow ? "meeting-booked" : nextStage(currentStage, scoreResult.score, turn.escalate)
 
   await updateLead(msg.workspaceId, leadId, null, {
     name: mergedKnown.name,
@@ -189,6 +296,10 @@ export async function processInboundMessage(msg: InboundTextMessage): Promise<{ 
     status: HUMAN_OWNED_STATUSES.includes(lead.status as LeadIntentStatus) ? undefined : band.status,
     callPermission: scoreResult.callPermission,
   })
+
+  if (bookingEscalation) {
+    await createActivity(msg.workspaceId, leadId, null, "qualification-updated", `Handing to a human: ${bookingEscalation}`)
+  }
 
   if (turn.escalate && turn.escalationReason) {
     await createActivity(msg.workspaceId, leadId, null, "qualification-updated", `Escalated to human: ${turn.escalationReason}`)
@@ -225,19 +336,19 @@ export async function processInboundMessage(msg: InboundTextMessage): Promise<{ 
     })
   }
 
-  const sendResult = await msg.transport.sendText(msg.from, turn.reply)
+  const sendResult = await msg.transport.sendText(msg.from, replyText)
   await insertOutboundMessage(
     msg.workspaceId,
     conversation.id,
-    turn.reply,
+    replyText,
     "bot",
     sendResult.externalMessageId ?? null,
     sendResult.ok ? "sent" : "failed"
   )
 
   await updateConversation(msg.workspaceId, conversation.id, {
-    botState: mergedKnown as Record<string, unknown>,
-    status: turn.escalate ? "escalated" : "bot",
+    botState: { ...mergedKnown, booking: nextBooking } as Record<string, unknown>,
+    status: turn.escalate || bookingEscalation ? "escalated" : "bot",
     lastMessageAt: new Date(),
   })
 

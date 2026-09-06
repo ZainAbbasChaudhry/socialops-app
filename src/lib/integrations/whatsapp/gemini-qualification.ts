@@ -15,7 +15,7 @@ import type { CallPermission, LeadIntentStatus, LeadQualification, LeadScoreFact
  * context can be swapped for a real knowledge-base lookup later without
  * changing this module's contract.
  */
-export const QUALIFICATION_PROMPT_VERSION = "v2"
+export const QUALIFICATION_PROMPT_VERSION = "v3"
 
 /** Used only when the workspace has told us nothing about itself. It says
  * what EasyLife does in general terms and no prices at all - a bot with no
@@ -93,6 +93,15 @@ ANSWERING FROM THE BUSINESS INFORMATION ABOVE:
 - If the information above does not cover what they asked, say you will check with the
   team and get back to them, and set "escalate" to true. Never guess.
 
+BOOKING A CALL:
+- If the customer is offered specific times (they will be listed in the message below as
+  "Times already offered"), and their reply accepts one of them, set "chosenSlot" to that
+  time's number. Accepting can be as short as "2", "the second one", or "Tuesday works".
+- Set "chosenSlot" to null if they accept none of them, ask for a different time, or you
+  are not sure which they mean. Never guess a number, and never mention or promise a time
+  that is not in that list - the times come from the real calendar and you cannot see it.
+- Do not write out the times yourself. They are added to your reply for you.
+
 Respond with ONLY a single JSON object, no markdown fences, no extra text, exactly this shape:
 {
   "reply": "the message to send back to the customer",
@@ -107,7 +116,8 @@ Respond with ONLY a single JSON object, no markdown fences, no extra text, exact
   "decisionMaker": "yes" | "no" | "unknown" | null,
   "wantsCall": true | false | null,
   "escalate": true | false,
-  "escalationReason": "short reason if escalate is true, else null"
+  "escalationReason": "short reason if escalate is true, else null",
+  "chosenSlot": 1 | 2 | 3 | null
 }
 `.trim()
 }
@@ -124,6 +134,15 @@ export interface KnownQualification extends Partial<LeadQualification> {
 
 export interface QualificationTurnResult {
   reply: string
+  /** 1-based index into the slots that were offered, when the customer's
+   * message accepted one of them. The model can only pick from a list we
+   * computed from the real calendar - it can never name a time itself. */
+  chosenSlot: number | null
+  /** What the model claimed, before it was checked against what was
+   * actually offered. The two differing means the model believed it was
+   * booking something that does not exist - which makes its reply, written
+   * in that belief, untrustworthy. The caller needs to see that. */
+  claimedSlot: number | null
   extracted: KnownQualification
   escalate: boolean
   escalationReason?: string
@@ -132,7 +151,12 @@ export interface QualificationTurnResult {
 
 const MAX_CONTEXT_TURNS = 12
 
-function buildPrompt(known: KnownQualification, recentTurns: ConversationTurn[], newMessage: string): string {
+function buildPrompt(
+  known: KnownQualification,
+  recentTurns: ConversationTurn[],
+  newMessage: string,
+  offeredSlotLabels: string[]
+): string {
   const knownSummary = Object.entries(known)
     .filter(([, v]) => v !== undefined && v !== "")
     .map(([k, v]) => `- ${k}: ${v}`)
@@ -143,9 +167,14 @@ function buildPrompt(known: KnownQualification, recentTurns: ConversationTurn[],
     .map((t) => `${t.sender === "customer" ? "Customer" : "Assistant"}: ${t.body}`)
     .join("\n")
 
+  const offered = offeredSlotLabels.length
+    ? `Times already offered to this customer:\n${offeredSlotLabels.map((label, i) => `${i + 1}. ${label}`).join("\n")}`
+    : ""
+
   return [
     knownSummary ? `Known so far:\n${knownSummary}` : "Known so far: nothing yet — this is a new conversation.",
     transcript ? `Recent conversation:\n${transcript}` : "",
+    offered,
     `New customer message: ${newMessage}`,
   ]
     .filter(Boolean)
@@ -159,6 +188,8 @@ function fallbackTurn(newMessage: string): QualificationTurnResult {
   return {
     reply:
       "Thanks for reaching out! One of our team will follow up with you shortly. In the meantime, could you tell me a bit about what you're looking for?",
+    chosenSlot: null,
+    claimedSlot: null,
     extracted: {},
     escalate: /\b(human|agent|representative|talk to (someone|a person))\b/i.test(newMessage),
     escalationReason: /\b(human|agent|representative|talk to (someone|a person))\b/i.test(newMessage)
@@ -179,9 +210,12 @@ export async function runQualificationTurn(
   /** The workspace's own services, prices, FAQs and policies. Empty means
    * the bot has nothing of the client's to quote, and the prompt keeps it
    * from inventing any. */
-  knowledge: KnowledgeEntry[] = []
+  knowledge: KnowledgeEntry[] = [],
+  /** Meeting times already put to this customer, in the order they were
+   * offered. Only these can be accepted. */
+  offeredSlotLabels: string[] = []
 ): Promise<QualificationTurnResult> {
-  const prompt = buildPrompt(known, recentTurns, newMessage)
+  const prompt = buildPrompt(known, recentTurns, newMessage, offeredSlotLabels)
   const result = await generateWithLLM(prompt, buildSystemInstruction(buildBusinessContext(knowledge)), llm)
 
   if (!result.ok) return fallbackTurn(newMessage)
@@ -230,8 +264,19 @@ export async function runQualificationTurn(
       if (extracted[key] === undefined) delete extracted[key]
     }
 
+    // Only an integer that indexes a slot we actually offered is accepted -
+    // a model naming slot 7 out of three offered is a bug we refuse to act
+    // on rather than book something arbitrary.
+    const claimed =
+      typeof parsed.chosenSlot === "number" && Number.isInteger(parsed.chosenSlot) && parsed.chosenSlot >= 1
+        ? parsed.chosenSlot
+        : null
+    const chosen = claimed !== null && claimed <= offeredSlotLabels.length ? claimed : null
+
     return {
       reply: parsed.reply.trim(),
+      chosenSlot: chosen,
+      claimedSlot: claimed,
       extracted,
       escalate: parsed.escalate === true,
       escalationReason: typeof parsed.escalationReason === "string" ? parsed.escalationReason : undefined,

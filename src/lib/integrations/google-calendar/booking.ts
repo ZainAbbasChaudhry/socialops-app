@@ -13,6 +13,11 @@ export interface BookMeetingInput {
   attendeeEmails: string[]
   assignedToUserId?: string | null
   createdByUserId: string | null
+  /** Reminders to set on the event itself. Defaults to a day before and
+   * ten minutes before - a meeting nobody is reminded about is a meeting
+   * that gets missed, and the client should not have to remember to
+   * configure that. */
+  reminderMinutes?: number[]
 }
 
 export interface BookMeetingResult {
@@ -60,6 +65,7 @@ export async function bookMeeting(input: BookMeetingInput): Promise<BookMeetingR
     timeZone: timezone,
     attendeeEmails: input.attendeeEmails,
     createMeetLink: true,
+    reminderMinutes: input.reminderMinutes ?? [24 * 60, 10],
   })
 
   if (!result.ok) {
