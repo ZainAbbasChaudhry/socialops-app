@@ -1105,3 +1105,60 @@ export async function markChatRead(
     body: { chatId },
   })
 }
+
+/** Archive, pin or mute a conversation. Separate catalogue features, so an
+ * admin can let a client tidy their own list without granting anything that
+ * sends. */
+export async function setChatFlag(
+  config: GatewayConfig,
+  sessionId: string,
+  chatId: string,
+  flag: "archive" | "pin" | "mute",
+  on: boolean
+): Promise<GatewayResult<unknown>> {
+  const routes = {
+    archive: "POST /sessions/{id}/chats/archive",
+    pin: "POST /sessions/{id}/chats/pin",
+    mute: "POST /sessions/{id}/chats/mute",
+  } as const
+  return request(config, {
+    method: "POST",
+    route: routes[flag],
+    path: `/sessions/${encodeSegment(sessionId)}/chats/${flag}`,
+    body: { chatId, [flag === "archive" ? "archive" : flag === "pin" ? "pin" : "mute"]: on },
+  })
+}
+
+/**
+ * Every media message across every chat, for the gallery.
+ *
+ * Read from the gateway's own message store rather than walking each chat:
+ * one request instead of hundreds, and it is the same store the conversation
+ * pane reads, so nothing can disagree between the two views.
+ */
+export async function listAllMedia(
+  config: GatewayConfig,
+  sessionId: string,
+  limit = 300
+): Promise<GatewayResult<WhatsAppChatMessage[]>> {
+  const result = await request<unknown>(config, {
+    method: "GET",
+    route: "GET /sessions/{id}/messages",
+    path: `/sessions/${encodeSegment(sessionId)}/messages?limit=${Math.min(1000, Math.max(1, limit))}`,
+    timeoutMs: LONG_TIMEOUT_MS,
+  })
+  if (!result.ok) return result
+  const rows = asRows(
+    result.data && typeof result.data === "object" && "messages" in (result.data as object)
+      ? (result.data as { messages: unknown }).messages
+      : result.data
+  )
+  const MEDIA_TYPES = new Set(["image", "video", "audio", "voice", "ptt", "document", "sticker"])
+  return {
+    ok: true,
+    data: rows
+      .map(toChatMessage)
+      .filter((m): m is WhatsAppChatMessage => m !== null && MEDIA_TYPES.has(m.type.toLowerCase()))
+      .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0)),
+  }
+}

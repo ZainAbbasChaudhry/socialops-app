@@ -12,8 +12,11 @@ import {
   listChats,
   listChatMessages,
   listStatusUpdates,
+  listAllMedia,
   sendTextMessage,
+  phoneFromChatId,
 } from "@/lib/integrations/whatsapp/openwa-client"
+import { findLeadByWhatsAppNumber } from "@/lib/leads/repository"
 import { getWorkspaceFeatures, hasFeature } from "@/lib/integrations/whatsapp/feature-access"
 
 /**
@@ -54,6 +57,46 @@ export async function GET(request: Request) {
       return NextResponse.json({
         messages: messages.data,
         canSend: hasFeature(features, "message.send-text"),
+      })
+    }
+
+    // The gallery: every media message across every chat, newest first.
+    if (view === "media") {
+      const media = await listAllMedia(config, sessionId)
+      if (!media.ok) {
+        return NextResponse.json(gatewayFailureBody(media), { status: statusForGatewayFailure(media) })
+      }
+      return NextResponse.json({ media: media.data })
+    }
+
+    // The lead behind a conversation, so a salesperson can see where it
+    // stands without leaving the inbox. Looked up by the phone number the
+    // chat id carries; a group has no single lead, and neither does a chat
+    // from someone who has never been qualified - both answer `lead: null`
+    // rather than inventing one.
+    if (view === "lead") {
+      const chatId = url.searchParams.get("chatId")
+      if (!chatId) return NextResponse.json({ error: "Which conversation?" }, { status: 400 })
+      if (chatId.endsWith("@g.us")) return NextResponse.json({ lead: null })
+
+      const phone = phoneFromChatId(chatId)
+      const lead = phone ? await findLeadByWhatsAppNumber(workspaceId, phone) : null
+      return NextResponse.json({
+        lead: lead
+          ? {
+              id: lead.id,
+              name: lead.name ?? null,
+              stage: lead.stage,
+              status: lead.status,
+              score: lead.score ?? null,
+              // The qualification the bot has actually extracted so far -
+              // shown as-is, with blanks where it has not learnt something
+              // yet, rather than filled in with guesses.
+              serviceInterested: lead.qualification?.serviceInterested ?? null,
+              budget: lead.qualification?.budget ?? null,
+              timeline: lead.qualification?.timeline ?? null,
+            }
+          : null,
       })
     }
 

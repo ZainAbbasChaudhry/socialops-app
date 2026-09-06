@@ -16,6 +16,7 @@ import {
   markChatRead,
   convertToVoiceNote,
   sendMediaMessage,
+  setChatFlag,
   type MediaKind,
 } from "@/lib/integrations/whatsapp/openwa-client"
 
@@ -67,6 +68,12 @@ const schema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("read"),
     chatId: z.string().trim().min(3).max(128),
+  }),
+  z.object({
+    action: z.literal("chat-flag"),
+    chatId: z.string().trim().min(3).max(128),
+    flag: z.enum(["archive", "pin", "mute"]),
+    on: z.boolean(),
   }),
   z.object({
     action: z.literal("send-media"),
@@ -126,6 +133,12 @@ export async function POST(request: Request) {
         const result = await markChatRead(config, sessionId, body.chatId)
         if (!result.ok) return NextResponse.json(gatewayFailureBody(result), { status: statusForGatewayFailure(result) })
         return NextResponse.json({ ok: true })
+      }
+
+      case "chat-flag": {
+        const result = await setChatFlag(config, sessionId, body.chatId, body.flag, body.on)
+        if (!result.ok) return NextResponse.json(gatewayFailureBody(result), { status: statusForGatewayFailure(result) })
+        return NextResponse.json({ ok: true, flag: body.flag, on: body.on })
       }
 
       case "send-media": {

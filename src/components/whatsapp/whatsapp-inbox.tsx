@@ -16,6 +16,8 @@ import {
   Send,
   Smile,
   Sparkles,
+  Pin,
+  BellOff,
   Square,
   Star,
   Image as ImageIcon,
@@ -69,6 +71,17 @@ interface Message {
   status: string | null
   authorName: string | null
   hasMedia: boolean
+}
+
+interface LeadSummary {
+  id: string
+  name: string | null
+  stage: string
+  status: string
+  score: number | null
+  serviceInterested: string | null
+  budget: string | null
+  timeline: string | null
 }
 
 interface StatusUpdate {
@@ -190,6 +203,10 @@ export function WhatsAppInbox() {
   const [aiError, setAiError] = React.useState<string | null>(null)
   const [aiQuestion, setAiQuestion] = React.useState("")
 
+  const [gallery, setGallery] = React.useState<Message[] | null>(null)
+  const [galleryError, setGalleryError] = React.useState<string | null>(null)
+  const [lead, setLead] = React.useState<LeadSummary | null | undefined>(undefined)
+
   const scrollRef = React.useRef<HTMLDivElement | null>(null)
 
   // ---- chat list -------------------------------------------------------
@@ -217,6 +234,22 @@ export function WhatsAppInbox() {
     }
   }, [])
 
+  /** Re-reads the chat list quietly - no spinner, no flicker - so the poll
+   * below can keep it current without the screen twitching every few
+   * seconds. */
+  const refreshChats = React.useCallback(async () => {
+    try {
+      const res = await fetch("/api/whatsapp/inbox")
+      const json = await res.json()
+      if (res.ok) {
+        setChats(json.chats ?? [])
+        setCan(json.can ?? {})
+      }
+    } catch {
+      /* a missed poll is not worth an error banner; the next one retries */
+    }
+  }, [])
+
   // ---- one conversation -------------------------------------------------
   const openChat = React.useCallback(async (chatId: string) => {
     setActiveId(chatId)
@@ -240,6 +273,95 @@ export function WhatsAppInbox() {
     // Keep the newest message in view when a conversation loads.
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
   }, [messages])
+
+  /**
+   * Keeps the screen current without a manual refresh.
+   *
+   * Polling, not a socket: the gateway pushes to EasyLife's webhook, not to
+   * the browser, so a socket here would need a whole delivery path of its
+   * own. Five seconds on the open conversation is fast enough to feel live
+   * while a person is typing; the chat list moves more slowly and is read at
+   * fifteen. Both pause when the tab is hidden, so a forgotten tab does not
+   * poll all night.
+   */
+  React.useEffect(() => {
+    let cancelled = false
+    let chatTimer: ReturnType<typeof setTimeout> | undefined
+    let messageTimer: ReturnType<typeof setTimeout> | undefined
+
+    const pollChats = async () => {
+      if (!cancelled && document.visibilityState === "visible") await refreshChats()
+      if (!cancelled) chatTimer = setTimeout(() => void pollChats(), 15000)
+    }
+    const pollMessages = async () => {
+      if (!cancelled && activeId && document.visibilityState === "visible") {
+        try {
+          const res = await fetch(`/api/whatsapp/inbox?view=messages&chatId=${encodeURIComponent(activeId)}`)
+          const json = await res.json()
+          // Replaced only when the count changed, so the list is not rebuilt
+          // (and the scroll position lost) on every quiet poll.
+          if (!cancelled && res.ok && Array.isArray(json.messages)) {
+            setMessages((prev) => (prev.length === json.messages.length ? prev : json.messages))
+          }
+        } catch {
+          /* ignored - the next poll retries */
+        }
+      }
+      if (!cancelled) messageTimer = setTimeout(() => void pollMessages(), 5000)
+    }
+
+    chatTimer = setTimeout(() => void pollChats(), 15000)
+    messageTimer = setTimeout(() => void pollMessages(), 5000)
+    return () => {
+      cancelled = true
+      if (chatTimer) clearTimeout(chatTimer)
+      if (messageTimer) clearTimeout(messageTimer)
+    }
+  }, [activeId, refreshChats])
+
+  // ---- the lead behind the open conversation ----------------------------
+  React.useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      // Clearing happens inside the async body rather than synchronously in
+      // the effect, so switching conversations never sets state during the
+      // render pass.
+      if (!activeId) {
+        if (!cancelled) setLead(undefined)
+        return
+      }
+      try {
+        const res = await fetch(`/api/whatsapp/inbox?view=lead&chatId=${encodeURIComponent(activeId)}`)
+        const json = await res.json()
+        if (!cancelled) setLead(res.ok ? (json.lead ?? null) : null)
+      } catch {
+        if (!cancelled) setLead(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [activeId])
+
+  // ---- the media gallery, loaded when its section is opened -------------
+  React.useEffect(() => {
+    if (section !== "media" || gallery !== null) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch("/api/whatsapp/inbox?view=media")
+        const json = await res.json()
+        if (cancelled) return
+        if (!res.ok) setGalleryError(json.error ?? "Could not load media.")
+        else setGallery(json.media ?? [])
+      } catch {
+        if (!cancelled) setGalleryError("Could not reach EasyLife.")
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [section, gallery])
 
   // ---- status updates ---------------------------------------------------
   React.useEffect(() => {
@@ -524,11 +646,11 @@ export function WhatsAppInbox() {
                   const name = displayName(chat)
                   const active = chat.id === activeId
                   return (
-                    <li key={chat.id}>
+                    <li key={chat.id} className="group/row border-b border-foreground/5">
                       <button
                         type="button"
                         onClick={() => void openChat(chat.id)}
-                        className={`flex w-full items-center gap-2.5 border-b border-foreground/5 px-3 py-2.5 text-left transition-colors ${
+                        className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors ${
                           active ? "bg-primary/10" : "hover:bg-muted/50"
                         }`}
                       >
@@ -554,6 +676,47 @@ export function WhatsAppInbox() {
                           </span>
                         </span>
                       </button>
+
+                      {/* Tidying actions, revealed on hover so the list stays
+                          a list. Each is re-read from the gateway afterwards
+                          rather than flipped locally, because the phone is
+                          the authority on whether a chat is really pinned. */}
+                      <span className="flex items-center gap-0.5 px-3 pb-1.5 opacity-0 transition-opacity group-hover/row:opacity-100">
+                        <IconAction
+                          title={chat.pinned ? "Unpin" : "Pin"}
+                          icon={Pin}
+                          active={chat.pinned}
+                          busy={busyMessage === chat.id}
+                          onClick={() =>
+                            void act({ action: "chat-flag", chatId: chat.id, flag: "pin", on: !chat.pinned }, () =>
+                              void refreshChats()
+                            )
+                          }
+                        />
+                        <IconAction
+                          title={chat.muted ? "Unmute" : "Mute"}
+                          icon={BellOff}
+                          active={chat.muted}
+                          busy={busyMessage === chat.id}
+                          onClick={() =>
+                            void act({ action: "chat-flag", chatId: chat.id, flag: "mute", on: !chat.muted }, () =>
+                              void refreshChats()
+                            )
+                          }
+                        />
+                        <IconAction
+                          title={chat.archived ? "Unarchive" : "Archive"}
+                          icon={Archive}
+                          active={chat.archived}
+                          busy={busyMessage === chat.id}
+                          onClick={() =>
+                            void act(
+                              { action: "chat-flag", chatId: chat.id, flag: "archive", on: !chat.archived },
+                              () => void refreshChats()
+                            )
+                          }
+                        />
+                      </span>
                     </li>
                   )
                 })}
@@ -651,9 +814,47 @@ export function WhatsAppInbox() {
             </div>
           )}
 
-          {(section === "communities" || section === "calls" || section === "media") && (
-            <UnavailableSection section={section} />
+          {section === "media" && (
+            <div className="p-3">
+              {galleryError && (
+                <p className="flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2.5 text-xs text-destructive">
+                  <ShieldAlert className="mt-px size-3.5 shrink-0" strokeWidth={1.75} />
+                  {galleryError}
+                </p>
+              )}
+              {!galleryError && gallery === null && (
+                <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="size-3.5 animate-spin" /> Loading media…
+                </p>
+              )}
+              {gallery?.length === 0 && (
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  No media yet. Photos, videos, voice notes and documents appear here once they arrive — the
+                  history synced when the number was linked carries no files, only the messages.
+                </p>
+              )}
+              {gallery && gallery.length > 0 && (
+                <div className="grid grid-cols-3 gap-1.5">
+                  {gallery.slice(0, 120).map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      title={`${m.type} · ${timeLabel(m.timestamp)}`}
+                      onClick={() => {
+                        setSection("chats")
+                        void openChat(m.chatId)
+                      }}
+                      className="aspect-square overflow-hidden rounded-lg bg-muted ring-1 ring-foreground/10 transition-opacity hover:opacity-80"
+                    >
+                      <GalleryTile message={m} />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
+
+          {(section === "communities" || section === "calls") && <UnavailableSection section={section} />}
         </div>
       </div>
 
@@ -682,7 +883,52 @@ export function WhatsAppInbox() {
                   {activeChat.isGroup ? "Group" : activeChat.id.split("@")[0]}
                 </span>
               </div>
+
+              {/* Where this person stands in the CRM, so nobody has to leave
+                  the inbox to find out. Absent when there is no lead - a
+                  group, or someone never qualified - rather than shown empty. */}
+              {lead && (
+                <div className="ml-auto flex shrink-0 items-center gap-2">
+                  {lead.score !== null && (
+                    <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold tabular-nums text-primary">
+                      {lead.score}
+                    </span>
+                  )}
+                  <span className="hidden flex-col text-right sm:flex">
+                    <span className="text-xs font-medium capitalize text-foreground">
+                      {lead.stage.replace(/-/g, " ")}
+                    </span>
+                    <span className="text-[10px] capitalize text-muted-foreground">{lead.status}</span>
+                  </span>
+                  <a
+                    href={`/dashboard/leads?lead=${encodeURIComponent(lead.id)}`}
+                    className="text-xs font-medium text-primary hover:underline"
+                  >
+                    Lead
+                  </a>
+                </div>
+              )}
             </header>
+
+            {lead && (lead.serviceInterested || lead.budget || lead.timeline) && (
+              <div className="flex flex-wrap gap-x-4 gap-y-1 border-b border-foreground/10 bg-muted/40 px-4 py-1.5 text-xs text-muted-foreground">
+                {lead.serviceInterested && (
+                  <span>
+                    Wants <span className="text-foreground">{lead.serviceInterested}</span>
+                  </span>
+                )}
+                {lead.budget && (
+                  <span>
+                    Budget <span className="text-foreground">{lead.budget}</span>
+                  </span>
+                )}
+                {lead.timeline && (
+                  <span>
+                    Timeline <span className="text-foreground">{lead.timeline}</span>
+                  </span>
+                )}
+              </div>
+            )}
 
             <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto bg-muted/25 px-4 py-3">
               {loadingMessages && (
@@ -970,6 +1216,38 @@ function MessageMedia({ message }: { message: Message }) {
   )
 }
 
+/** One square in the media gallery. Images and videos show themselves;
+ * anything else shows what it is, because a grey box with no label tells a
+ * person nothing about the file they are looking for. */
+function GalleryTile({ message }: { message: Message }) {
+  const kind = mediaKind(message.type)
+  const [failed, setFailed] = React.useState(false)
+  const src = `/api/whatsapp/inbox/media?chatId=${encodeURIComponent(message.chatId)}&messageId=${encodeURIComponent(
+    message.id
+  )}`
+
+  if (!failed && (kind === "image" || kind === "sticker")) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={src}
+        alt="Shared media"
+        loading="lazy"
+        onError={() => setFailed(true)}
+        className="size-full object-cover"
+      />
+    )
+  }
+
+  const Icon = kind === "video" ? ImageIcon : kind === "voice" || kind === "audio" ? Mic : FileText
+  return (
+    <span className="flex size-full flex-col items-center justify-center gap-1 text-muted-foreground">
+      <Icon className="size-5" strokeWidth={1.75} />
+      <span className="text-[10px] capitalize">{kind ?? message.type}</span>
+    </span>
+  )
+}
+
 function IconAction({
   title,
   icon: Icon,
@@ -1013,10 +1291,6 @@ function UnavailableSection({ section }: { section: Section }) {
     calls: {
       title: "Call history isn't available here",
       body: "Calls stay on the phone. EasyLife can place AI sales calls from the Call Agent screen, which is a different thing and does keep its own history.",
-    },
-    media: {
-      title: "Shared media",
-      body: "Media from a conversation appears inside that conversation. A combined gallery across every chat isn't built yet.",
     },
   }
   const text = copy[section]
