@@ -188,7 +188,7 @@ export const PROVIDER_REGISTRY: Record<ProviderId, ProviderDefinition> = {
     name: "WhatsApp (OpenWA / Baileys NOWEB)",
     category: "messaging",
     description:
-      "Self-hosted WhatsApp gateway. A phone is paired by QR once and the gateway holds the session, so there is no Meta Business verification, no per-message fee and no WABA. Runs as its own persistent service (see deploy/openwa) because a paired WhatsApp socket cannot live inside a request-scoped web app.",
+      "Self-hosted WhatsApp gateway. A phone is paired by QR once and the gateway holds the session, so there is no Meta Business verification, no per-message fee and no WABA. Runs as its own persistent service (OpenWA, MIT-licensed - see deploy/openwa/README.md) because a paired WhatsApp socket cannot live inside a request-scoped web app.",
     capabilities: ["api_key", "webhook", "messages"],
     credentialFields: [
       {

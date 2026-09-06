@@ -25,14 +25,17 @@ configuration change in Integrations, not a code change.
 
 ### 1. Stand the gateway up
 
-Full instructions in [`deploy/openwa/README.md`](deploy/openwa/README.md).
-In short: a small VPS, an `A` record for `wa` pointing at it, then
+EasyLife does not ship a gateway. It talks to **OpenWA** — an independent
+MIT-licensed project — over its HTTP API. Full instructions in
+[`deploy/openwa/README.md`](deploy/openwa/README.md).
 
-```bash
-cd deploy/openwa
-cp .env.example .env        # fill in both secrets: openssl rand -hex 32
-docker compose up -d --build
-```
+In short: clone OpenWA onto a small always-on VPS, an `A` record for `wa`
+pointing at it, then `docker compose up -d`.
+
+> **Set `ENGINE_TYPE=baileys` in the gateway's `.env`.** OpenWA's own default
+> is `whatsapp-web.js`, which drives Chromium through Puppeteer — ruled out
+> for EasyLife. Nothing fails loudly if you forget; you simply get the wrong
+> engine. It is the single most important line in that file.
 
 **This cannot run on the cPanel host.** A paired WhatsApp session is a socket
 that must stay open between requests and hold credentials in memory;
@@ -66,10 +69,19 @@ connection.
 
 ### 4. Pair the phone
 
-`POST /api/whatsapp/session` (the Connect button) returns a QR as a data URL.
-Scan it from **WhatsApp → Linked devices**. `GET /api/whatsapp/session` polls
-the state; it becomes `connected` only when the gateway reports the socket is
-actually open — never optimistically.
+**WhatsApp → Connection → Connect.** Two ways, and a workspace is offered
+only the ones it is entitled to:
+
+- **QR code** — scan from **WhatsApp → Linked devices**. The QR is fetched on
+  demand, handed to the browser that asked, and never stored or logged.
+- **Pairing code** — an 8-character code typed into the phone, for remote
+  setup where nobody can point a camera at the screen.
+
+The state becomes `connected` only when the gateway reports the socket is
+actually open — never optimistically. If the gateway ever loses the session
+(its volume is replaced, an idle session is pruned), EasyLife re-creates it
+on the next call instead of failing forever on an id the gateway has
+forgotten.
 
 The session id is derived server-side from the workspace id
 (`deriveSessionId`) and is never read from the request. One workspace cannot
@@ -84,7 +96,19 @@ Message the paired number from a different phone. Expect, in order:
 3. a bot reply is sent and stored with `provider_status = 'sent'`
 
 If the reply row says `failed`, the gateway rejected the send — that is the
-truth being recorded, not a display bug. Check `docker compose logs openwa`.
+truth being recorded, not a display bug. Check the gateway's logs.
+
+### 6. Decide what the client may do
+
+**WhatsApp → Capabilities.** 61 capabilities covering all 196 OpenWA
+operations, each mapped to the gateway routes it authorises. Turning one off
+removes it server-side, so a crafted API request is refused exactly as the UI
+is. Only an EasyLife platform operator (`PLATFORM_ADMIN_EMAILS`) can change
+them; the client sees the same screen read-only.
+
+Bulk campaigns is off by default and should stay off unless the client
+genuinely has permission to message their list — it is their own number that
+WhatsApp restricts.
 
 ---
 

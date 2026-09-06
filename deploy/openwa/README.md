@@ -1,149 +1,205 @@
-# EasyLife OpenWA Gateway
+# Running OpenWA as EasyLife's WhatsApp gateway
 
-The persistent WhatsApp service behind `wa.easylife.com.pk`. The dashboard
-talks to it over HTTPS; it talks to WhatsApp over Baileys' **NOWEB** engine —
-a direct WebSocket implementation of WhatsApp's multi-device protocol.
+EasyLife does not ship a WhatsApp gateway. It talks to **OpenWA**, an
+independent open-source project, over its HTTP API.
 
-There is **no browser** in this service: no Puppeteer, no Chromium, no
-`whatsapp-web.js`, no page scraping. That is what NOWEB means, and it is why
-this image is a plain `node:20-slim` rather than a browser image.
+> **What used to be here.** This folder previously held a small Baileys
+> gateway written for EasyLife as a stand-in while the integration was being
+> built. It has been removed. EasyLife now speaks the real OpenWA contract —
+> 61 capabilities covering all 196 of its operations — so running a
+> home-grown substitute would mean reimplementing all of it, badly. Nothing
+> in the dashboard references the old gateway any more.
 
-## Why this is a separate service
+- Project: OpenWA (`openwa`), MIT licensed.
+- EasyLife adopts its **capability surface** only. All branding, UI, copy and
+  product design in the dashboard are EasyLife's own.
+- The MIT licence requires the copyright notice to travel with any
+  redistribution. If you ship OpenWA (in an image, a bundle, an appliance),
+  ship its `LICENSE` file with it.
 
-A paired WhatsApp session is a socket that must stay open between requests
-and hold credentials in memory. The EasyLife dashboard runs on cPanel under
-Passenger, where handlers are request-scoped and the process can be recycled
-at any time. **cPanel cannot host this** — not a limitation of the code, a
-property of the runtime. So the gateway runs on its own host and the
-dashboard calls it.
+---
 
-```
-Customer's phone
-      ↓  WhatsApp
-OpenWA gateway (this service, Baileys NOWEB)   ← wa.easylife.com.pk
-      ↓  signed webhook
-EasyLife dashboard  /api/webhooks/openwa       ← dashboard.easylife.com.pk
-      ↓
-Postgres → RAG → AI reply → back out through the gateway
-```
+## 1. The engine setting — read this first
 
-## What you need before deploying
+OpenWA supports two engines, chosen with `ENGINE_TYPE`:
 
-- A host that can run Docker and keep a process alive (any small VPS; 1 vCPU
-  / 1 GB is enough for a handful of sessions).
-- A DNS **A record** pointing `wa` at that host's public IPv4 address:
+| `ENGINE_TYPE` | What it is | For EasyLife |
+| --- | --- | --- |
+| `whatsapp-web.js` | **OpenWA's default.** Drives a real Chromium through Puppeteer. | **Do not use.** |
+| `baileys` | A direct WebSocket client. No browser, no Chromium. | **This is the one.** |
 
-  ```
-  wa    A    <YOUR_SERVER_IP>
-  ```
+**`ENGINE_TYPE=baileys` must be set explicitly.** Leaving it unset gives you
+the Puppeteer engine, which EasyLife's requirements rule out. This is the
+single most important line in the gateway's configuration, and the easiest to
+forget, because it is the default that is wrong for us rather than a missing
+value that would fail loudly.
 
-  The IP is whatever your VPS provider assigned — this repo does not and
-  cannot know it. Caddy will not be able to obtain a certificate until this
-  record resolves publicly.
-- Ports 80 and 443 reachable from the internet (Let's Encrypt validation).
+The engine a workspace is configured for in EasyLife
+(**WhatsApp → Capabilities → Engine**) must match the gateway's
+`ENGINE_TYPE`. Capabilities that exist on only one engine are refused by the
+feature gate on the other, with the reason named.
 
-## Deploy
+---
+
+## 2. Where it can run
+
+**Not on the cPanel host.** A paired WhatsApp session is a socket that must
+stay open between requests and hold credentials in memory. Passenger gives
+request-scoped, recyclable processes. That is a property of the runtime, not
+something configuration can work around.
+
+A small always-on VPS is enough. Budget for persistent disk: session
+credentials and media live on it, and losing that volume unlinks every
+paired number.
+
+---
+
+## 3. Stand it up
 
 ```bash
+git clone https://github.com/<the OpenWA repository> openwa
+cd openwa
 cp .env.example .env
-# fill in OPENWA_API_KEY, OPENWA_WEBHOOK_SECRET, DASHBOARD_WEBHOOK_URL
-#   openssl rand -hex 32     # run twice, once per secret
-
-# put the real hostname in the Caddyfile if it is not wa.easylife.com.pk
-docker compose up -d --build
-docker compose logs -f openwa
 ```
 
-Verify it is up (from the gateway host):
+Then edit `.env`. The values EasyLife depends on:
+
+```ini
+ENGINE_TYPE=baileys          # NOT the default - see section 1
+PORT=2785                    # EasyLife's base URL points at this
+BAILEYS_AUTH_DIR=./data/baileys
+
+# Anything durable. SQLite is fine for one workspace; Postgres for more.
+DATABASE_TYPE=postgres
+DATABASE_HOST=...
+DATABASE_NAME=openwa
+
+STORAGE_TYPE=local
+STORAGE_LOCAL_PATH=./data/media
+
+AUTO_START_SESSIONS=true     # sessions come back by themselves after a restart
+```
+
+Bring it up with its own compose file:
 
 ```bash
-curl -s -H "X-Api-Key: $OPENWA_API_KEY" https://wa.easylife.com.pk/health
-# {"ok":true,"engine":"baileys-noweb","uptimeSeconds":12}
+docker compose up -d
 ```
 
-A request without the header must return `401`. If it does not, stop and fix
-that before pairing a phone.
+It listens on `127.0.0.1:2785` by default — deliberately not on a public
+interface. Put a TLS terminator (Caddy, nginx, your provider's load
+balancer) in front of it and give it a hostname such as
+`wa.easylife.com.pk`. EasyLife will not accept a plaintext gateway URL for a
+live workspace, and it should not: the API key travels on every request.
 
-## Connect it to the dashboard
+---
 
-1. In the dashboard: **Integrations → WhatsApp (OpenWA / Baileys NOWEB)**.
-2. Enter the gateway base URL (`https://wa.easylife.com.pk`), the same
-   `OPENWA_API_KEY`, and the same `OPENWA_WEBHOOK_SECRET`.
-3. **Test Connection** — this hits `/health` only. It never sends a message
-   and never disturbs a live pairing, so it is free and safe to repeat.
-4. Activate the provider, then pair a phone from the WhatsApp page.
+## 4. Create the API key EasyLife will use
 
-## API
+OpenWA manages keys at `/api/auth/api-keys`. The plaintext key is returned
+**once, at creation** — if you lose it, revoke it and make another.
 
-Every route requires `X-Api-Key`. Session ids are chosen by the dashboard
-(derived there from the workspace id) and validated here against
-`^[A-Za-z0-9_-]{4,64}$` before touching the filesystem.
+Give EasyLife a key that is **not session-scoped**, because EasyLife creates
+and names the session itself, per workspace.
 
-| Method | Path                             | Purpose                                       |
-| ------ | -------------------------------- | --------------------------------------------- |
-| GET    | `/health`                        | Liveness + API key check                      |
-| GET    | `/sessions/:id`                  | Current state, including the pairing QR        |
-| POST   | `/sessions/:id/start`            | Bring the session up (idempotent)              |
-| POST   | `/sessions/:id/logout`           | End the session and clear its credentials      |
-| POST   | `/sessions/:id/messages`         | `{ "to": "923001234567", "text": "..." }`      |
+Store it only in EasyLife's Integrations screen, where it is encrypted at
+rest (AES-256-GCM, per workspace). Never in the repository, a screenshot, or
+a chat message.
 
-`status` is one of `disconnected`, `connecting`, `qr`, `connected`, `error`.
+---
 
-A send returns `{ "ok": true, "id": "<wamid>" }` only when WhatsApp actually
-assigned an id. If it did not, the gateway returns an error rather than a
-synthesized id — so the dashboard can never display "sent" for a message
-WhatsApp never accepted.
+## 5. Point EasyLife at it
 
-## Webhooks out
+**Integrations → WhatsApp (OpenWA / Baileys NOWEB)**
 
-Every delivery to `DASHBOARD_WEBHOOK_URL` is signed:
+| Field | Value |
+| --- | --- |
+| Gateway base URL | `https://wa.easylife.com.pk` — no `/api` suffix; EasyLife adds it |
+| Gateway API key | the key from step 4, sent as `X-API-Key` on every call |
+| Webhook signing secret | any high-entropy string; the same one on both sides |
+
+Then **Test Connection**. It calls `GET /health` and nothing else — it never
+sends a message and never disturbs a live pairing. A successful test is what
+unlocks Live mode.
+
+### Webhook back to EasyLife
+
+Register a webhook in OpenWA pointing at:
 
 ```
-X-OpenWA-Signature: sha256=<hex HMAC-SHA256 of the exact request body>
+https://dashboard.easylife.com.pk/api/webhooks/openwa
 ```
 
-computed with `OPENWA_WEBHOOK_SECRET`. The dashboard recomputes it over the
-raw body and rejects a mismatch with `401`. Two event shapes are sent:
+with the same signing secret. OpenWA signs each delivery as
+`X-OpenWA-Signature` (HMAC-SHA256 over the raw body). EasyLife verifies it in
+constant time before trusting anything in the payload — the session id inside
+the body is only a hint about *which* workspace's secret to check with.
 
-```jsonc
-{ "event": "message", "sessionId": "ws_…",
-  "message": { "id": "…", "from": "923001234567", "pushName": "Ali",
-               "type": "text", "text": "…", "fromMe": false, "timestamp": 0 } }
+---
 
-{ "event": "session.status", "sessionId": "ws_…",
-  "session": { "status": "connected", "connectedNumber": "923001234567", "error": null } }
-```
+## 6. Pair a number
 
-Group chats, broadcasts and status updates are dropped at the gateway.
-History-sync batches are ignored (`type !== "notify"`), so re-pairing a phone
-does not replay old conversations into the lead pipeline.
+In EasyLife: **WhatsApp → Connection → Connect**. Two ways, and a workspace
+sees only the ones it is entitled to:
+
+- **QR code** — scan from WhatsApp → Linked devices. The QR is fetched on
+  demand, passed straight to the browser that asked, and never stored or
+  logged.
+- **Pairing code** — an 8-character code typed into the phone, for when
+  nobody can point a camera at the screen.
+
+The session's name is derived server-side from the workspace
+(`deriveSessionId`) and is never read from a request, so one workspace cannot
+address, inspect or unlink another's number. The status becomes `connected`
+only when the gateway reports the socket is actually open — never because a
+connect request was accepted.
+
+If the gateway's volume is ever replaced, EasyLife re-creates the session on
+its next call rather than failing forever on a session id the gateway has
+forgotten.
+
+---
+
+## 7. Decide what the client may do
+
+**WhatsApp → Capabilities.** 61 capabilities, grouped, each mapped to the
+gateway routes it authorises. Turning one off removes it server-side — a
+crafted API request is refused exactly as the UI is.
+
+Only an EasyLife platform operator (`PLATFORM_ADMIN_EMAILS`) can change them.
+A client sees the same screen read-only.
+
+Start from the recommended set. **Bulk campaigns is off by default and should
+stay off** unless the client genuinely has permission to message the people
+on their list — WhatsApp restricts and bans numbers for this, and it is the
+client's own number at risk.
+
+---
+
+## 8. Verify end to end
+
+Message the paired number from a different phone. Expect, in order:
+
+1. a row in `whatsapp_messages` (inbound)
+2. a lead in the CRM with source `whatsapp`
+3. a bot reply, stored with `provider_status = 'sent'`
+
+A reply row saying `failed` is the truth being recorded, not a display bug —
+the gateway rejected the send. Check the gateway's logs.
+
+---
 
 ## Operating notes
 
-- **`openwa-sessions` is the volume that matters.** It holds paired
-  credentials. Back it up; losing it means every workspace re-scans a QR.
-- **Reconnects are bounded** — exponential backoff up to
-  `MAX_RECONNECT_ATTEMPTS` (default 8), then the session parks in `error`.
-  An unbounded retry loop against WhatsApp's servers is how a number gets
-  rate-limited.
-- **A logout from the phone is terminal.** The gateway does not retry it;
-  pairing again needs a new QR.
-- **Nothing sensitive is logged.** No message bodies, no credentials, no QR
-  strings — recipient numbers and status codes only.
-
-## Secrets
-
-`.env` is not committed and must never be. Both secrets are 32-byte random
-values; rotate them by updating `.env`, restarting the gateway, and saving
-the new values in the dashboard's Integrations page. Rotation does not
-unpair any phone.
-
-## Compliance note, stated plainly
-
-Baileys is an unofficial implementation of WhatsApp's protocol. It is not
-endorsed by WhatsApp or Meta, and using it carries a real risk that the
-paired number is restricted or banned — a risk the official Cloud API does
-not carry. That trade-off (no Meta Business verification, no per-message
-fee, versus that risk) is a business decision, not a technical one. The
-dashboard keeps the Cloud API transport fully working alongside this one, so
-switching a workspace over later is a configuration change, not a rewrite.
+- **Back up the session volume.** Losing it unlinks every paired number and
+  every client has to scan again.
+- **One number per workspace.** EasyLife keys the account on
+  `(workspace, provider)`.
+- **Never log** API keys, webhook secrets, QR strings, pairing codes or
+  message bodies. EasyLife does not; keep the gateway's log level in line.
+- **Upgrades:** OpenWA is an independent project on its own release
+  schedule. Read its changelog before upgrading — EasyLife's capability
+  catalogue is pinned to the routes described in
+  `src/lib/integrations/whatsapp/feature-catalog.ts`, and a route that moves
+  will be refused by the gate (fail-closed) until the catalogue is updated to
+  match. That is the intended behaviour, not a fault.
