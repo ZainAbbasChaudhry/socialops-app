@@ -28,6 +28,15 @@ interface ProviderDetailSheetProps {
 export function ProviderDetailSheet({ provider, canManage, open, onOpenChange, onSaved }: ProviderDetailSheetProps) {
   const [fields, setFields] = React.useState<Record<string, string>>({})
   const [mode, setMode] = React.useState<IntegrationMode>("disabled")
+  // Tracks whether the person actually touched the Mode select this time.
+  // The PUT route rejects any request where mode is "live" AND credential
+  // fields are changing in the same call (it wants a fresh Test Connection
+  // between "save new creds" and "flip to live"). `mode` state is always
+  // populated from the current provider so the <Select> has a value, so it
+  // must NOT be sent on every save — only when the person deliberately
+  // changed it — otherwise an ordinary credential update while already in
+  // "live" mode gets silently rejected (nothing persists, no obvious cause).
+  const [modeTouched, setModeTouched] = React.useState(false)
   const [saving, setSaving] = React.useState(false)
   const [testing, setTesting] = React.useState(false)
   const [message, setMessage] = React.useState<{ tone: "success" | "error"; text: string } | null>(null)
@@ -41,6 +50,7 @@ export function ProviderDetailSheet({ provider, canManage, open, onOpenChange, o
     setSyncedProvider(provider)
     setFields({})
     setMode(provider?.mode ?? "disabled")
+    setModeTouched(false)
     setMessage(null)
   }
 
@@ -55,7 +65,9 @@ export function ProviderDetailSheet({ provider, canManage, open, onOpenChange, o
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ mode, fields }),
+        // Only include `mode` when the person deliberately changed it via
+        // the Mode select — see the `modeTouched` comment above.
+        body: JSON.stringify(modeTouched ? { mode, fields } : { fields }),
       })
       const data = await res.json()
       if (!res.ok) {
@@ -64,6 +76,8 @@ export function ProviderDetailSheet({ provider, canManage, open, onOpenChange, o
       }
       setMessage({ tone: "success", text: "Saved." })
       setFields({})
+      setModeTouched(false)
+      if (data.provider?.mode) setMode(data.provider.mode)
       onSaved(data.provider)
     } catch {
       setMessage({ tone: "error", text: "Couldn't reach the server." })
@@ -159,7 +173,13 @@ export function ProviderDetailSheet({ provider, canManage, open, onOpenChange, o
           {canManage && def.supportedModes.length > 1 && (
             <div className="flex flex-col gap-1.5">
               <Label>Mode</Label>
-              <Select value={mode} onValueChange={(v) => setMode(v as IntegrationMode)}>
+              <Select
+                value={mode}
+                onValueChange={(v) => {
+                  setMode(v as IntegrationMode)
+                  setModeTouched(true)
+                }}
+              >
                 <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
