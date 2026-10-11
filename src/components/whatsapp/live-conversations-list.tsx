@@ -385,6 +385,8 @@ export function LiveConversationsList() {
   const [resolutionError, setResolutionError] = React.useState<string | null>(null)
   const [updatingAiMode, setUpdatingAiMode] = React.useState(false)
   const [aiModeError, setAiModeError] = React.useState<string | null>(null)
+  const [deletingConversation, setDeletingConversation] = React.useState(false)
+  const [deleteConversationError, setDeleteConversationError] = React.useState<string | null>(null)
   const [labelFilter, setLabelFilter] = React.useState<string | null>(null)
   const [slaFilter, setSlaFilter] = React.useState(false)
   const [tagDraft, setTagDraft] = React.useState("")
@@ -713,6 +715,32 @@ export function LiveConversationsList() {
 
   function applySuggestedReply(text: string) {
     setReplyBody(text)
+  }
+
+  /** Permanently deletes the selected conversation - for clearing out test/
+   * demo threads before go-live, not a routine action (no undo). The linked
+   * lead, if any, is untouched - only this conversation's own rows go. */
+  async function deleteSelectedConversation() {
+    if (!selectedId || !selected) return
+    const label = selected.contactName ?? selected.contactPhone
+    if (!window.confirm(`Permanently delete the conversation with "${label}"? This can't be undone.`)) return
+
+    setDeleteConversationError(null)
+    setDeletingConversation(true)
+    try {
+      const res = await fetch(`/api/whatsapp/conversations/${selectedId}`, { method: "DELETE", credentials: "same-origin" })
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        setDeleteConversationError(data?.error ?? "Couldn't delete this conversation.")
+        return
+      }
+      setSelectedId(null)
+      await refreshConversations()
+    } catch {
+      setDeleteConversationError("Couldn't reach the server.")
+    } finally {
+      setDeletingConversation(false)
+    }
   }
 
   async function discardSuggestion() {
@@ -1082,6 +1110,19 @@ export function LiveConversationsList() {
                     })}
                   </DropdownMenuContent>
                 </DropdownMenu>
+
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  title="Delete conversation"
+                  onClick={deleteSelectedConversation}
+                  disabled={deletingConversation}
+                  className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                >
+                  {deletingConversation ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+                  Delete
+                </Button>
+                {deleteConversationError && <p className="text-xs text-destructive">{deleteConversationError}</p>}
               </div>
             </CardHeader>
             <Tabs value={panelTab} onValueChange={(v) => setPanelTab(v as "messages" | "notes")}>

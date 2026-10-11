@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { requireAuth } from "@/lib/auth/guard"
+import { requireAuth, requireRole } from "@/lib/auth/guard"
 import { verifySameOrigin } from "@/lib/auth/csrf"
-import { getLead, updateLead } from "@/lib/leads/repository"
+import { getLead, updateLead, deleteLead } from "@/lib/leads/repository"
 import { apiError } from "@/lib/api/errors"
 
 const updateLeadSchema = z
@@ -65,5 +65,28 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
     return NextResponse.json({ lead })
   } catch (error) {
     return apiError(error, "Failed to update lead")
+  }
+}
+
+/** Permanently deletes a lead - owner/admin only, same bar as removing a
+ * team member, since there's no undo. Linked WhatsApp conversations, calls,
+ * comments and meetings are kept but detached (see deleteLead). */
+export async function DELETE(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const originCheck = verifySameOrigin(request)
+  if (originCheck) return originCheck
+
+  try {
+    const auth = await requireAuth()
+    if (!auth.ok) return auth.response
+    const roleCheck = requireRole(auth.ctx, ["owner", "admin"])
+    if (roleCheck) return roleCheck
+
+    const { id } = await ctx.params
+    const deleted = await deleteLead(auth.ctx.workspaceId, id)
+    if (!deleted) return NextResponse.json({ error: "Lead not found" }, { status: 404 })
+
+    return NextResponse.json({ ok: true })
+  } catch (error) {
+    return apiError(error, "Failed to delete lead")
   }
 }

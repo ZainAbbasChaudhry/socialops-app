@@ -7,6 +7,7 @@ import {
   setConversationResolutionStatus,
   setConversationAiMode,
   updateConversation,
+  deleteConversation,
 } from "@/lib/integrations/whatsapp/repository"
 import { apiError } from "@/lib/api/errors"
 
@@ -84,5 +85,27 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
     })
   } catch (error) {
     return apiError(error, "Failed to update conversation")
+  }
+}
+
+/** Permanently deletes a conversation (and its messages/notes) - owner/
+ * admin only, same bar as deleting a lead, since there's no undo. */
+export async function DELETE(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const originCheck = verifySameOrigin(request)
+  if (originCheck) return originCheck
+
+  try {
+    const auth = await requireAuth()
+    if (!auth.ok) return auth.response
+    const roleCheck = requireRole(auth.ctx, ["owner", "admin"])
+    if (roleCheck) return roleCheck
+
+    const { id } = await ctx.params
+    const deleted = await deleteConversation(auth.ctx.workspaceId, id)
+    if (!deleted) return NextResponse.json({ error: "Conversation not found" }, { status: 404 })
+
+    return NextResponse.json({ ok: true })
+  } catch (error) {
+    return apiError(error, "Failed to delete conversation")
   }
 }

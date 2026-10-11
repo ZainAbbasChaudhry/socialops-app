@@ -24,6 +24,7 @@ import {
   CircleCheck,
   CircleX,
   ArrowUpRight,
+  Trash2,
 } from "lucide-react"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
@@ -83,8 +84,23 @@ const QUALIFICATION_ROWS: { key: keyof Lead["qualification"]; label: string; ico
 const READY_FOR_SALES_INDEX = LEAD_STAGE_ORDER.indexOf("ready-for-sales")
 
 export function LeadProfileDrawer({ lead, onOpenChange }: LeadProfileDrawerProps) {
-  const { setStage, setCallPermission, addNote, addTag, removeTag, activitiesForLead, assignTo, setPriority, setNextFollowUp, sendToHumanSales, markContacted, markWon, markLost, markSheetSynced } =
-    useLeads()
+  const {
+    setStage,
+    setCallPermission,
+    addNote,
+    addTag,
+    removeTag,
+    activitiesForLead,
+    assignTo,
+    setPriority,
+    setNextFollowUp,
+    sendToHumanSales,
+    markContacted,
+    markWon,
+    markLost,
+    markSheetSynced,
+    removeLead,
+  } = useLeads()
   const { queue, addToQueue } = useCallQueue()
   const { callsForLead } = useCalls()
   const { meetingsForLead } = useMeetings()
@@ -93,6 +109,8 @@ export function LeadProfileDrawer({ lead, onOpenChange }: LeadProfileDrawerProps
   const [tagDraft, setTagDraft] = React.useState("")
   const [syncing, setSyncing] = React.useState(false)
   const [bookingOpen, setBookingOpen] = React.useState(false)
+  const [deleting, setDeleting] = React.useState(false)
+  const [deleteError, setDeleteError] = React.useState<string | null>(null)
 
   const [prevLeadId, setPrevLeadId] = React.useState(lead?.id ?? null)
   if ((lead?.id ?? null) !== prevLeadId) {
@@ -116,6 +134,21 @@ export function LeadProfileDrawer({ lead, onOpenChange }: LeadProfileDrawerProps
     await syncLead(currentLead, calls[0])
     markSheetSynced(currentLead.id)
     setSyncing(false)
+  }
+
+  async function handleDelete() {
+    if (!window.confirm(`Permanently delete "${currentLead.name}"? This can't be undone. Any linked WhatsApp conversation is kept, just unlinked.`)) {
+      return
+    }
+    setDeleteError(null)
+    setDeleting(true)
+    const ok = await removeLead(currentLead.id)
+    setDeleting(false)
+    if (!ok) {
+      setDeleteError("Couldn't delete this lead.")
+      return
+    }
+    onOpenChange(false)
   }
 
   return (
@@ -144,8 +177,20 @@ export function LeadProfileDrawer({ lead, onOpenChange }: LeadProfileDrawerProps
                 </span>
               </div>
             </div>
-            <LeadScoreBadge score={lead.score} />
+            <div className="flex items-center gap-2">
+              <LeadScoreBadge score={lead.score} />
+              <button
+                type="button"
+                title="Delete lead"
+                onClick={handleDelete}
+                disabled={deleting}
+                className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+              >
+                {deleting ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+              </button>
+            </div>
           </div>
+          {deleteError && <p className="text-xs text-destructive">{deleteError}</p>}
 
           {/* Stage + status */}
           <div className="flex flex-wrap items-center gap-2">

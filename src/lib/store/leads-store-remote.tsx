@@ -163,6 +163,13 @@ export function DatabaseLeadsProvider({ children }: { children: React.ReactNode 
     [leads, patchLead]
   )
 
+  const removeLead = React.useCallback(async (id: string) => {
+    const res = await fetch(`/api/leads/${id}`, { method: "DELETE", credentials: "same-origin" })
+    if (!res.ok) return false
+    setLeads((prev) => prev.filter((l) => l.id !== id))
+    return true
+  }, [])
+
   const markSheetSynced = React.useCallback(async (id: string) => {
     await fetch(`/api/leads/${id}/activities`, {
       method: "POST",
@@ -207,6 +214,7 @@ export function DatabaseLeadsProvider({ children }: { children: React.ReactNode 
       markWon,
       markLost,
       markSheetSynced,
+      removeLead,
       refetch: refetchLeads,
     }),
     [
@@ -234,6 +242,7 @@ export function DatabaseLeadsProvider({ children }: { children: React.ReactNode 
       markWon,
       markLost,
       markSheetSynced,
+      removeLead,
       refetchLeads,
     ]
   )
