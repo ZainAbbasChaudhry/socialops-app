@@ -4,6 +4,7 @@ import { requireAuth, requireRole } from "@/lib/auth/guard"
 import { verifySameOrigin } from "@/lib/auth/csrf"
 import { requireClientMode } from "@/lib/auth/dashboard-mode-guard"
 import { getConversationById, listMessages, insertOutboundMessage, updateConversation } from "@/lib/integrations/whatsapp/repository"
+import { computeSessionWindow } from "@/lib/integrations/whatsapp/session-window"
 import { sendWhatsAppTextMessage } from "@/lib/integrations/whatsapp/cloud-api"
 import { resolveActiveConnection, resolveCredentialValue } from "@/lib/integrations/credential-resolution"
 import { apiError } from "@/lib/api/errors"
@@ -27,6 +28,14 @@ export async function GET(_request: Request, ctx: { params: Promise<{ id: string
         body: m.body,
         providerStatus: m.providerStatus,
         createdAt: m.createdAt.toISOString(),
+        media: m.mediaStorageKey
+          ? {
+              url: `/api/whatsapp/conversations/${id}/messages/${m.id}/media`,
+              mimeType: m.mediaMimeType,
+              filename: m.mediaFilename,
+              sizeBytes: m.mediaSizeBytes,
+            }
+          : null,
       })),
     })
   } catch (error) {
@@ -58,6 +67,22 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
 
     const body = sendSchema.parse(await request.json())
 
+    // The Cloud API only accepts free-form text within 24h of the
+    // customer's last message - sending outside that window fails on
+    // Meta's side with an opaque error. Catching it here, before the call,
+    // gives the agent an actionable message instead of a silent failure.
+    const sessionWindow = computeSessionWindow(conversation.lastInboundMessageAt)
+    if (!sessionWindow.open) {
+      return NextResponse.json(
+        {
+          error:
+            "The 24-hour window for this conversation has closed. You can only send a pre-approved template message until the customer messages again.",
+          sessionWindow,
+        },
+        { status: 409 }
+      )
+    }
+
     const { live, row } = await resolveActiveConnection(auth.ctx.workspaceId, "whatsapp")
     if (!live) {
       return NextResponse.json({ error: "WhatsApp is not connected and activated for this workspace. Configure it in Integrations." }, { status: 400 })
@@ -77,7 +102,20 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
       result.externalMessageId ?? null,
       result.ok ? "sent" : "failed"
     )
-    await updateConversation(auth.ctx.workspaceId, id, { status: "human", lastMessageAt: new Date() })
+    // Sending anything manually supersedes whatever the bot had drafted -
+    // clear it so a stale suggestion never lingers in the UI.
+    const now = new Date()
+    await updateConversation(auth.ctx.workspaceId, id, {
+      status: "human",
+      lastMessageAt: now,
+      pendingAiReply: null,
+      ...(result.ok ? { lastOutboundMessageAt: now } : {}),
+      // First-ever successful reply in this conversation - the other half
+      // of the response-time sample alongside firstInboundMessageAt (set
+      // when the customer's first message came in). See
+      // migrations/0020_conversation_first_response.sql.
+      ...(result.ok && !conversation.firstResponseAt ? { firstResponseAt: now } : {}),
+    })
 
     if (!result.ok) {
       return NextResponse.json({ error: result.errorMessage ?? "WhatsApp send failed", message }, { status: 502 })

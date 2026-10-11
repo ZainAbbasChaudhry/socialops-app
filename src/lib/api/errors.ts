@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { ZodError } from "zod"
 import { DatabaseUnavailableError } from "@/lib/db/client"
+import { causeChainSummary } from "@/lib/db/errors"
 
 /**
  * Standardized safe API error responses — never leak stack traces, SQL,
@@ -13,7 +14,12 @@ export function apiError(error: unknown, fallbackMessage = "Something went wrong
     return NextResponse.json({ error: "Invalid request", details: error.flatten() }, { status: 400 })
   }
   if (error instanceof DatabaseUnavailableError) {
-    console.error("Database error:", error.cause instanceof Error ? error.cause.message : error.cause)
+    // Logging just error.cause.message only shows Drizzle's own wrapper
+    // message, not the underlying pg driver error (timeout, refused
+    // connection, pool exhaustion, bad credentials, etc.) one level further
+    // down — walk the full cause chain so that detail actually reaches
+    // stderr.log instead of every DB failure looking identical.
+    console.error("Database error:", causeChainSummary(error))
     return NextResponse.json({ error: "Service temporarily unavailable" }, { status: 503 })
   }
 

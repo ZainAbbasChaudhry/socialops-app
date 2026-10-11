@@ -3,7 +3,7 @@ import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm"
 import { withDb } from "@/lib/db/client"
 import { leads, leadActivities } from "@/lib/db/schema"
 import { leadRowToLead, activityRowToActivity } from "./mapper"
-import type { Lead, LeadActivity, LeadActivityType } from "@/types"
+import type { Lead, LeadActivity, LeadActivityType, LeadScoreFactors } from "@/types"
 
 export interface ListLeadsParams {
   workspaceId: string
@@ -176,6 +176,7 @@ export interface UpdateLeadInput {
   budget?: string | null
   timeline?: string | null
   leadScore?: number
+  scoreFactors?: LeadScoreFactors
   stage?: string
   status?: string
   callPermission?: "yes" | "no" | "unknown"

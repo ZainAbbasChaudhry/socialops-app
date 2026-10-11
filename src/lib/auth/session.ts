@@ -3,6 +3,7 @@ import { SignJWT, jwtVerify, type JWTPayload } from "jose"
 import { eq } from "drizzle-orm"
 import { withDb } from "@/lib/db/client"
 import { sessions } from "@/lib/db/schema"
+import { causeChainSummary } from "@/lib/db/errors"
 
 /**
  * Session design: a random secret is generated per session and never stored
@@ -102,8 +103,13 @@ export async function verifySessionCookie(cookieValue: string | undefined): Prom
 
       return { sessionId: session.id, userId: session.userId, workspaceId: session.workspaceId }
     })
-  } catch {
+  } catch (error) {
     // Database unavailable — fail closed, never silently treat as authenticated.
+    // This used to swallow the error with no trace at all, so a DB blip showed
+    // up only as users mysteriously logged out, with nothing in stderr.log to
+    // explain why. Log the full cause chain (never the connection string) so
+    // a real outage/pool exhaustion is distinguishable from anything else.
+    console.error("[auth] verifySessionCookie:", causeChainSummary(error))
     return null
   }
 }

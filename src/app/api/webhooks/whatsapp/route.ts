@@ -1,7 +1,11 @@
 import { createHmac, timingSafeEqual } from "node:crypto"
 import { NextResponse } from "next/server"
 import { decryptSecret } from "@/lib/integrations/crypto"
-import { findWhatsAppContextByWaba, findWhatsAppContextByVerifyToken } from "@/lib/integrations/whatsapp/repository"
+import {
+  findWhatsAppContextByWaba,
+  findWhatsAppContextByVerifyToken,
+  applyMessageStatusUpdate,
+} from "@/lib/integrations/whatsapp/repository"
 import { processInboundMessage } from "@/lib/integrations/whatsapp/pipeline"
 import { recordWebhookEvent, markWebhookEventProcessed, markWebhookEventFailed } from "@/lib/integrations/webhook-events"
 
@@ -43,12 +47,25 @@ interface WhatsAppWebhookMessage {
   id: string
   type: string
   text?: { body: string }
+  image?: { id: string; mime_type?: string; caption?: string }
+  video?: { id: string; mime_type?: string; caption?: string }
+  document?: { id: string; mime_type?: string; caption?: string; filename?: string }
+  audio?: { id: string; mime_type?: string }
+  sticker?: { id: string; mime_type?: string }
+}
+
+interface WhatsAppWebhookStatus {
+  id: string
+  status: "sent" | "delivered" | "read" | "failed"
+  timestamp?: string
+  recipient_id?: string
 }
 
 interface WhatsAppWebhookValue {
   metadata?: { phone_number_id?: string; display_phone_number?: string }
   contacts?: { profile?: { name?: string }; wa_id?: string }[]
   messages?: WhatsAppWebhookMessage[]
+  statuses?: WhatsAppWebhookStatus[]
 }
 
 interface WhatsAppWebhookEntry {
@@ -104,11 +121,22 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 })
   }
 
-  // Trusted from here on. Process every text message in every entry/change;
-  // status-update deliveries (no `messages` array) are safely skipped.
+  // Trusted from here on. Process every text message and every
+  // delivery/read-receipt status update in every entry/change.
   for (const entry of parsed.entry ?? []) {
     for (const change of entry.changes ?? []) {
       const value = change.value
+
+      // Delivery/read receipts for messages WE sent - no `messages` array on
+      // these callbacks, so this runs independently of the block below.
+      for (const status of value?.statuses ?? []) {
+        try {
+          await applyMessageStatusUpdate(context.workspaceId, status.id, status.status)
+        } catch (error) {
+          console.error("WhatsApp status update processing failed:", error instanceof Error ? error.message : error)
+        }
+      }
+
       const phoneNumberId = value?.metadata?.phone_number_id
       if (!value?.messages || !phoneNumberId) continue
 
@@ -136,7 +164,10 @@ export async function POST(request: Request) {
             contactName,
             externalMessageId: message.id,
             messageType: message.type,
-            body: message.type === "text" ? (message.text?.body ?? null) : null,
+            body:
+              message.type === "text"
+                ? (message.text?.body ?? null)
+                : (message.image?.caption ?? message.video?.caption ?? message.document?.caption ?? null),
             rawMetadata: message as unknown as Record<string, unknown>,
           })
           await markWebhookEventProcessed(event.id)
