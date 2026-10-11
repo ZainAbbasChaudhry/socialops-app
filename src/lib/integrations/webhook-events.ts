@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { eq, isNotNull } from "drizzle-orm"
+import { eq, sql } from "drizzle-orm"
 import { withDb } from "@/lib/db/client"
 import { webhookEvents } from "@/lib/db/schema"
 
@@ -44,7 +44,17 @@ export async function recordWebhookEvent(input: RecordWebhookEventInput): Promis
       })
       .onConflictDoNothing({
         target: [webhookEvents.provider, webhookEvents.externalEventId],
-        where: isNotNull(webhookEvents.externalEventId),
+        // Must be an unqualified column reference to match the partial
+        // unique index's own predicate (migration 0010). Drizzle's
+        // isNotNull(webhookEvents.externalEventId) here renders a
+        // schema-qualified "socialops"."webhook_events"."external_event_id"
+        // reference, which Postgres rejects in this clause position with
+        // "invalid reference to FROM-clause entry for table
+        // 'webhook_events'" (42P01) - the insert's own target table isn't
+        // addressable that way inside its own ON CONFLICT predicate. This
+        // was silently crashing every single inbound WhatsApp webhook
+        // delivery before a conversation row could ever be created.
+        where: sql`external_event_id is not null`,
       })
       .returning({ id: webhookEvents.id })
     return created ?? null
