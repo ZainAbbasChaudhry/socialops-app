@@ -30,12 +30,21 @@ export function computeReadiness(row: IntegrationConnectionRow | null, provider:
   const def = PROVIDER_REGISTRY[provider]
   const missing: string[] = []
 
+  // Deliberately NOT `.every()` with a push side-effect: `.every()`
+  // short-circuits on the first `false`, which would silently skip
+  // checking (and reporting) every required field after the first one
+  // that's missing - e.g. WhatsApp's "Webhook verify token" failing would
+  // hide "Meta App secret" from `missing` entirely even though it's also
+  // unset, understating what's actually missing.
   const requiredFields = def.credentialFields.filter((f) => f.required)
-  const credentialsComplete = requiredFields.every((f) => {
+  let credentialsComplete = true
+  for (const f of requiredFields) {
     const ok = resolveCredentialValue(row, f.key, provider).value !== null
-    if (!ok) missing.push(f.label)
-    return ok
-  })
+    if (!ok) {
+      missing.push(f.label)
+      credentialsComplete = false
+    }
+  }
 
   let oauthComplete = true
   if (def.requiresOAuth) {
