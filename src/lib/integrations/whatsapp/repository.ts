@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { and, eq, desc, lte, asc } from "drizzle-orm"
+import { and, eq, desc, lte, asc, sql } from "drizzle-orm"
 import { withDb } from "@/lib/db/client"
 import {
   integrationConnections,
@@ -89,10 +89,83 @@ export async function ensureWhatsAppAccount(
   })
 }
 
+// ---------------------------------------------------------------------------
+// migrations/0020_conversation_first_response.sql adds
+// first_inbound_message_at/first_response_at to whatsapp_conversations.
+// Drizzle's schema (schema.ts) already declares those two columns, which
+// means a bare `.select()`/`.returning()` on this table asks Postgres for
+// every schema-declared column and fails outright with "column does not
+// exist" on any environment where that migration hasn't landed yet. The
+// helpers below keep every other conversation read/write working
+// regardless of migration status - checked once per process (briefly
+// re-checked so the real columns come online by themselves, no redeploy
+// needed, once the migration is actually applied) - at the cost of the two
+// response-time fields simply reading as null until then.
+
+let responseTimeColumnsSupportedCache: { value: boolean; checkedAt: number } | null = null
+const RESPONSE_TIME_CACHE_TTL_MS = 60_000
+
+async function supportsResponseTimeColumns(): Promise<boolean> {
+  if (responseTimeColumnsSupportedCache && Date.now() - responseTimeColumnsSupportedCache.checkedAt < RESPONSE_TIME_CACHE_TTL_MS) {
+    return responseTimeColumnsSupportedCache.value
+  }
+  let value = false
+  try {
+    const result = await withDb(async (db) =>
+      db.execute(sql`
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'socialops' AND table_name = 'whatsapp_conversations' AND column_name = 'first_inbound_message_at'
+        LIMIT 1
+      `)
+    )
+    const rowCount = Array.isArray(result) ? result.length : ((result as { rows?: unknown[] }).rows?.length ?? 0)
+    value = rowCount > 0
+  } catch {
+    value = false
+  }
+  responseTimeColumnsSupportedCache = { value, checkedAt: Date.now() }
+  return value
+}
+
+/** Column map for ordinary conversation reads/writes - the two
+ * response-time columns resolve to a real column once migration 0020 has
+ * landed, and to a literal NULL (same declared type) before then, so every
+ * caller's shape stays identical either way. */
+async function conversationSelectColumns() {
+  const supported = await supportsResponseTimeColumns()
+  return {
+    id: whatsappConversations.id,
+    workspaceId: whatsappConversations.workspaceId,
+    whatsappAccountId: whatsappConversations.whatsappAccountId,
+    contactPhone: whatsappConversations.contactPhone,
+    contactName: whatsappConversations.contactName,
+    leadId: whatsappConversations.leadId,
+    status: whatsappConversations.status,
+    resolutionStatus: whatsappConversations.resolutionStatus,
+    snoozedUntil: whatsappConversations.snoozedUntil,
+    botState: whatsappConversations.botState,
+    lastMessageAt: whatsappConversations.lastMessageAt,
+    lastInboundMessageAt: whatsappConversations.lastInboundMessageAt,
+    lastOutboundMessageAt: whatsappConversations.lastOutboundMessageAt,
+    firstInboundMessageAt: supported
+      ? whatsappConversations.firstInboundMessageAt
+      : sql<Date | null>`NULL`.as("first_inbound_message_at"),
+    firstResponseAt: supported
+      ? whatsappConversations.firstResponseAt
+      : sql<Date | null>`NULL`.as("first_response_at"),
+    aiMode: whatsappConversations.aiMode,
+    pendingAiReply: whatsappConversations.pendingAiReply,
+    createdAt: whatsappConversations.createdAt,
+    updatedAt: whatsappConversations.updatedAt,
+  }
+}
+// ---------------------------------------------------------------------------
+
 export async function ensureConversation(workspaceId: string, whatsappAccountId: string, contactPhone: string) {
   return withDb(async (db) => {
+    const columns = await conversationSelectColumns()
     const existing = await db
-      .select()
+      .select(columns)
       .from(whatsappConversations)
       .where(and(eq(whatsappConversations.whatsappAccountId, whatsappAccountId), eq(whatsappConversations.contactPhone, contactPhone)))
       .limit(1)
@@ -101,7 +174,7 @@ export async function ensureConversation(workspaceId: string, whatsappAccountId:
     const [created] = await db
       .insert(whatsappConversations)
       .values({ id: randomUUID(), workspaceId, whatsappAccountId, contactPhone })
-      .returning()
+      .returning(columns)
     return created
   })
 }
@@ -109,7 +182,7 @@ export async function ensureConversation(workspaceId: string, whatsappAccountId:
 export async function getConversationById(workspaceId: string, conversationId: string) {
   return withDb(async (db) => {
     const rows = await db
-      .select()
+      .select(await conversationSelectColumns())
       .from(whatsappConversations)
       .where(and(eq(whatsappConversations.id, conversationId), eq(whatsappConversations.workspaceId, workspaceId)))
       .limit(1)
@@ -164,11 +237,14 @@ export async function updateConversation(
   }>
 ) {
   return withDb(async (db) => {
+    const columns = await conversationSelectColumns()
+    const supported = await supportsResponseTimeColumns()
+    const safePatch = supported ? patch : { ...patch, firstInboundMessageAt: undefined, firstResponseAt: undefined }
     const [updated] = await db
       .update(whatsappConversations)
-      .set({ ...patch, updatedAt: new Date() })
+      .set({ ...safePatch, updatedAt: new Date() })
       .where(and(eq(whatsappConversations.id, conversationId), eq(whatsappConversations.workspaceId, workspaceId)))
-      .returning()
+      .returning(columns)
     return updated ?? null
   })
 }
@@ -460,7 +536,7 @@ export async function listConversations(workspaceId: string, limit = 100) {
       )
 
     return db
-      .select()
+      .select(await conversationSelectColumns())
       .from(whatsappConversations)
       .where(eq(whatsappConversations.workspaceId, workspaceId))
       .orderBy(desc(whatsappConversations.lastMessageAt))
@@ -550,12 +626,17 @@ export interface ConversationAnalyticsRow {
 
 export async function listConversationsForAnalytics(workspaceId: string): Promise<ConversationAnalyticsRow[]> {
   return withDb(async (db) => {
+    const supported = await supportsResponseTimeColumns()
     const rows = await db
       .select({
         id: whatsappConversations.id,
         resolutionStatus: whatsappConversations.resolutionStatus,
-        firstInboundMessageAt: whatsappConversations.firstInboundMessageAt,
-        firstResponseAt: whatsappConversations.firstResponseAt,
+        firstInboundMessageAt: supported
+          ? whatsappConversations.firstInboundMessageAt
+          : sql<Date | null>`NULL`.as("first_inbound_message_at"),
+        firstResponseAt: supported
+          ? whatsappConversations.firstResponseAt
+          : sql<Date | null>`NULL`.as("first_response_at"),
         updatedAt: whatsappConversations.updatedAt,
         assignedToUserId: leads.assignedToUserId,
       })
