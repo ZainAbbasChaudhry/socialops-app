@@ -117,6 +117,31 @@ export async function getConversationById(workspaceId: string, conversationId: s
   })
 }
 
+/** Permanently deletes a conversation and everything scoped to it (its
+ * messages and internal notes) - for cleaning up test/demo threads before
+ * go-live, not a routine action (no undo). The linked lead, if any, is left
+ * alone - only this conversation and its own child rows go. */
+export async function deleteConversation(workspaceId: string, conversationId: string): Promise<boolean> {
+  return withDb(async (db) => {
+    return db.transaction(async (tx) => {
+      const existing = await tx
+        .select({ id: whatsappConversations.id })
+        .from(whatsappConversations)
+        .where(and(eq(whatsappConversations.id, conversationId), eq(whatsappConversations.workspaceId, workspaceId)))
+        .limit(1)
+      if (!existing[0]) return false
+
+      await tx.delete(whatsappMessages).where(eq(whatsappMessages.conversationId, conversationId))
+      await tx.delete(whatsappConversationNotes).where(eq(whatsappConversationNotes.conversationId, conversationId))
+      const [deleted] = await tx
+        .delete(whatsappConversations)
+        .where(and(eq(whatsappConversations.id, conversationId), eq(whatsappConversations.workspaceId, workspaceId)))
+        .returning({ id: whatsappConversations.id })
+      return Boolean(deleted)
+    })
+  })
+}
+
 export type ConversationResolutionStatus = "open" | "pending" | "resolved" | "snoozed"
 export type ConversationAiMode = "auto" | "suggest" | "off"
 

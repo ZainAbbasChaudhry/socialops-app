@@ -33,6 +33,10 @@ export interface LeadsContextValue {
   markWon: (id: string) => void
   markLost: (id: string) => void
   markSheetSynced: (id: string) => void
+  /** Permanently deletes the lead - no undo. No-op in demo mode (there's
+   * nothing real to delete); calls DELETE /api/leads/:id in database mode.
+   * Resolves true if the lead was actually removed. */
+  removeLead: (id: string) => Promise<boolean>
   /** No-op in demo mode; re-fetches from the server in database mode. */
   refetch: () => void
 }

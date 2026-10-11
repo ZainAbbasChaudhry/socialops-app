@@ -195,6 +195,16 @@ function DemoLeadsBridge({ children }: { children: React.ReactNode }) {
     [logActivity]
   )
 
+  // Demo data lives only in memory for this tab - "deleting" it is just
+  // removing it from local state, no server round trip.
+  const removeLead = React.useCallback(
+    async (id: string) => {
+      setLeads((prev) => prev.filter((l) => l.id !== id))
+      return true
+    },
+    [setLeads]
+  )
+
   const value = React.useMemo<LeadsContextValue>(
     () => ({
       leads,
@@ -221,6 +231,7 @@ function DemoLeadsBridge({ children }: { children: React.ReactNode }) {
       markWon,
       markLost,
       markSheetSynced,
+      removeLead,
       refetch: () => {},
     }),
     [
@@ -246,6 +257,7 @@ function DemoLeadsBridge({ children }: { children: React.ReactNode }) {
       markWon,
       markLost,
       markSheetSynced,
+      removeLead,
     ]
   )
 

@@ -1,7 +1,15 @@
 import { randomUUID } from "node:crypto"
 import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm"
 import { withDb } from "@/lib/db/client"
-import { leads, leadActivities } from "@/lib/db/schema"
+import {
+  leads,
+  leadActivities,
+  whatsappConversations,
+  comments,
+  calls,
+  meetings,
+  googleSheetsSyncedRows,
+} from "@/lib/db/schema"
 import { leadRowToLead, activityRowToActivity } from "./mapper"
 import type { Lead, LeadActivity, LeadActivityType, LeadScoreFactors } from "@/types"
 
@@ -273,5 +281,36 @@ export async function createActivity(
       .values({ id: randomUUID(), workspaceId, leadId, actorUserId, activityType: type, description })
       .returning()
     return activityRowToActivity(row)
+  })
+}
+
+/** Permanently removes a lead - for cleaning up test/demo data before
+ * go-live, not a routine CRM action (there's no "undo"). Runs as one
+ * transaction so a failure partway through can't leave the lead gone but
+ * its activity log orphaned, or vice versa.
+ *
+ * Rows that only make sense attached to a lead (activity log, the
+ * Google-Sheets sync log) are deleted outright. Rows that have their own
+ * independent lifecycle - a WhatsApp conversation, a comment, a call, a
+ * meeting - are only detached (leadId set to null), never deleted, since
+ * the lead disappearing shouldn't erase a real conversation or call
+ * record. Returns false if the lead doesn't exist in this workspace. */
+export async function deleteLead(workspaceId: string, leadId: string): Promise<boolean> {
+  return withDb(async (db) => {
+    return db.transaction(async (tx) => {
+      const existing = await tx.select({ id: leads.id }).from(leads).where(and(eq(leads.id, leadId), eq(leads.workspaceId, workspaceId))).limit(1)
+      if (!existing[0]) return false
+
+      await tx.delete(leadActivities).where(and(eq(leadActivities.leadId, leadId), eq(leadActivities.workspaceId, workspaceId)))
+      await tx.delete(googleSheetsSyncedRows).where(and(eq(googleSheetsSyncedRows.leadId, leadId), eq(googleSheetsSyncedRows.workspaceId, workspaceId)))
+
+      await tx.update(whatsappConversations).set({ leadId: null }).where(and(eq(whatsappConversations.leadId, leadId), eq(whatsappConversations.workspaceId, workspaceId)))
+      await tx.update(comments).set({ leadId: null }).where(and(eq(comments.leadId, leadId), eq(comments.workspaceId, workspaceId)))
+      await tx.update(calls).set({ leadId: null }).where(and(eq(calls.leadId, leadId), eq(calls.workspaceId, workspaceId)))
+      await tx.update(meetings).set({ leadId: null }).where(and(eq(meetings.leadId, leadId), eq(meetings.workspaceId, workspaceId)))
+
+      const [deleted] = await tx.delete(leads).where(and(eq(leads.id, leadId), eq(leads.workspaceId, workspaceId))).returning({ id: leads.id })
+      return Boolean(deleted)
+    })
   })
 }

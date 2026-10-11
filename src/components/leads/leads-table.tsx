@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { PhoneCall, Calendar } from "lucide-react"
+import { PhoneCall, Calendar, Trash2, Loader2 } from "lucide-react"
 import { LeadScoreBadge } from "@/components/leads/lead-score-badge"
 import { LeadProfileDrawer } from "@/components/leads/lead-profile-drawer"
 import { StatusBadge } from "@/components/dashboard/status-badge"
@@ -27,9 +27,22 @@ function isSocialPlatform(platform: Lead["source"]["platform"]): platform is Soc
 }
 
 export function LeadsTable({ leads }: { leads: Lead[] }) {
-  const { leads: allLeads } = useLeads()
+  const { leads: allLeads, removeLead } = useLeads()
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
   const selected = allLeads.find((l) => l.id === selectedId) ?? null
+  const [deletingId, setDeletingId] = React.useState<string | null>(null)
+  const [deleteError, setDeleteError] = React.useState<string | null>(null)
+
+  async function handleDelete(lead: Lead) {
+    if (!window.confirm(`Permanently delete "${lead.name}"? This can't be undone. Any linked WhatsApp conversation is kept, just unlinked.`)) {
+      return
+    }
+    setDeleteError(null)
+    setDeletingId(lead.id)
+    const ok = await removeLead(lead.id)
+    setDeletingId(null)
+    if (!ok) setDeleteError(`Couldn't delete "${lead.name}".`)
+  }
 
   if (leads.length === 0) {
     return <div className="rounded-xl border border-dashed border-border px-4 py-16 text-center text-sm text-muted-foreground">Nothing matches these filters.</div>
@@ -48,6 +61,7 @@ export function LeadsTable({ leads }: { leads: Lead[] }) {
             <th className="px-3.5 py-2.5 font-medium">Call / Meeting</th>
             <th className="px-3.5 py-2.5 font-medium">Assigned</th>
             <th className="px-3.5 py-2.5 font-medium">Last interaction</th>
+            <th className="px-3.5 py-2.5 font-medium"></th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
@@ -94,11 +108,26 @@ export function LeadsTable({ leads }: { leads: Lead[] }) {
                 </td>
                 <td className="px-3.5 py-2.5 text-xs text-muted-foreground">{assignee ? assignee.name : "Unassigned"}</td>
                 <td className="px-3.5 py-2.5 text-xs text-muted-foreground">{formatRelativeTime(lead.lastInteractionAt, MOCK_NOW)}</td>
+                <td className="px-3.5 py-2.5 text-right">
+                  <button
+                    type="button"
+                    title="Delete lead"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleDelete(lead)
+                    }}
+                    disabled={deletingId === lead.id}
+                    className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                  >
+                    {deletingId === lead.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+                  </button>
+                </td>
               </tr>
             )
           })}
         </tbody>
       </table>
+      {deleteError && <p className="px-3.5 py-2 text-xs text-destructive">{deleteError}</p>}
       <LeadProfileDrawer lead={selected} onOpenChange={(open) => !open && setSelectedId(null)} />
     </div>
   )
