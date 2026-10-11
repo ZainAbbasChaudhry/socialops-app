@@ -8,6 +8,7 @@ import { QrLinkCard } from "@/components/whatsapp/qr-link-card"
 import { ChatbotDemo } from "@/components/whatsapp/chatbot-demo"
 import { LeadInboxList } from "@/components/whatsapp/lead-inbox-list"
 import { LiveConversationsList } from "@/components/whatsapp/live-conversations-list"
+import { WhatsAppAnalyticsPanel } from "@/components/whatsapp/whatsapp-analytics-panel"
 import { WhatsAppIcon } from "@/components/whatsapp/whatsapp-icon"
 import { AnimatedNumber } from "@/components/dashboard/animated-number"
 import { LEAD_STAGE_ORDER } from "@/lib/lead-status"
@@ -64,6 +65,7 @@ export function WhatsAppPageContent() {
           <TabsList className="max-w-full overflow-x-auto">
             <TabsTrigger value="connection">Connection</TabsTrigger>
             <TabsTrigger value="live">Live Conversations</TabsTrigger>
+            <TabsTrigger value="reports">Reports</TabsTrigger>
             <TabsTrigger value="qr-demo">QR Demo</TabsTrigger>
           </TabsList>
 
@@ -73,6 +75,10 @@ export function WhatsAppPageContent() {
 
           <TabsContent value="live" className="pt-4">
             <LiveConversationsList />
+          </TabsContent>
+
+          <TabsContent value="reports" className="pt-4">
+            <WhatsAppAnalyticsPanel />
           </TabsContent>
 
           <TabsContent value="qr-demo" className="pt-4">

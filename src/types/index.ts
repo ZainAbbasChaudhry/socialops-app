@@ -475,6 +475,7 @@ export interface Lead {
   lastInteractionAt: string
   notes: string
   tags: string[]
+  scoreFactors?: LeadScoreFactors
 }
 
 export type LeadActivityType =

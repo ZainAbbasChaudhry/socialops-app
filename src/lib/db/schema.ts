@@ -90,6 +90,9 @@ export const leads = socialops.table("leads", {
   preferredCallTime: text("preferred_call_time"),
 
   leadScore: integer("lead_score").notNull().default(0),
+  // Per-factor breakdown behind leadScore at the time it was computed - see
+  // migrations/0017_lead_score_factors.sql.
+  scoreFactors: jsonb("score_factors"),
   stage: text("stage").notNull().default("new"),
   status: text("status").notNull().default("cold"),
   callPermission: text("call_permission").notNull().default("unknown"),
@@ -178,8 +181,39 @@ export const whatsappConversations = socialops.table("whatsapp_conversations", {
   contactName: text("contact_name"),
   leadId: uuid("lead_id"),
   status: text("status").notNull().default("bot"),
+  // Separate from `status` above: `status` is who's driving the
+  // conversation (bot/escalated/human/closed), `resolutionStatus` is
+  // whether the customer's issue is actually done. A conversation can be
+  // "human" handling and still "open" for days - these are independent
+  // axes, not synonyms. See migrations/0012_conversation_resolution_status.sql.
+  resolutionStatus: text("resolution_status").notNull().default("open"),
+  snoozedUntil: timestamp("snoozed_until", { withTimezone: true }),
   botState: jsonb("bot_state").notNull().default({}),
   lastMessageAt: timestamp("last_message_at", { withTimezone: true }).notNull().defaultNow(),
+  // The Cloud API's 24h free-text window is measured from the customer's
+  // last INBOUND message specifically - lastMessageAt above is touched by
+  // outbound sends too, so it can't answer that question on its own. Null
+  // until the first inbound message arrives. See
+  // migrations/0013_conversation_session_window.sql.
+  lastInboundMessageAt: timestamp("last_inbound_message_at", { withTimezone: true }),
+  // When this conversation last got a successfully-sent reply (bot or
+  // agent) - compared against lastInboundMessageAt to detect "waiting on a
+  // reply" for the SLA alert. See migrations/0019_conversation_last_outbound.sql.
+  lastOutboundMessageAt: timestamp("last_outbound_message_at", { withTimezone: true }),
+  // Set once and never overwritten - the customer's first-ever message and
+  // the first successfully-sent reply (bot or agent) that followed it. The
+  // gap between them is this conversation's one response-time sample for
+  // the reporting tab. See migrations/0020_conversation_first_response.sql.
+  firstInboundMessageAt: timestamp("first_inbound_message_at", { withTimezone: true }),
+  firstResponseAt: timestamp("first_response_at", { withTimezone: true }),
+  // Standing per-conversation configuration for how the bot should behave
+  // going forward - independent of `status` (who's driving right now).
+  // 'auto' (today's only behavior): bot qualifies and sends automatically.
+  // 'suggest': bot drafts into pendingAiReply but never sends it itself.
+  // 'off': bot never touches this conversation. See
+  // migrations/0015_conversation_ai_mode.sql.
+  aiMode: text("ai_mode").notNull().default("auto"),
+  pendingAiReply: text("pending_ai_reply"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 })
@@ -195,7 +229,37 @@ export const whatsappMessages = socialops.table("whatsapp_messages", {
   providerStatus: text("provider_status").notNull().default("received"),
   sender: text("sender").notNull().default("customer"),
   rawMetadata: jsonb("raw_metadata"),
+  // Stored attachment, if any - see migrations/0018_message_media.sql.
+  mediaStorageKey: text("media_storage_key"),
+  mediaMimeType: text("media_mime_type"),
+  mediaFilename: text("media_filename"),
+  mediaSizeBytes: integer("media_size_bytes"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+})
+
+// Agent-only notes on a conversation - never sent to the customer, never
+// touches the Cloud API. See migrations/0014_conversation_notes.sql.
+export const whatsappConversationNotes = socialops.table("whatsapp_conversation_notes", {
+  id: uuid("id").primaryKey(),
+  workspaceId: uuid("workspace_id").notNull(),
+  conversationId: uuid("conversation_id").notNull(),
+  authorUserId: uuid("author_user_id"),
+  body: text("body").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+})
+
+// Saved reply templates ("canned responses"), shared workspace-wide, with a
+// `/shortcut` for fast insertion in the reply box. See
+// migrations/0016_quick_replies.sql.
+export const whatsappQuickReplies = socialops.table("whatsapp_quick_replies", {
+  id: uuid("id").primaryKey(),
+  workspaceId: uuid("workspace_id").notNull(),
+  shortcut: text("shortcut").notNull(),
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  createdByUserId: uuid("created_by_user_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 })
 
 // ---------------------------------------------------------------------------

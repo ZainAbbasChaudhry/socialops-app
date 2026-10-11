@@ -166,6 +166,7 @@ export interface QualificationScoreResult {
   score: number
   status: LeadIntentStatus
   callPermission: CallPermission
+  factors: LeadScoreFactors
 }
 
 /** Deterministic scoring layer — Gemini extracts structured facts, but the
@@ -187,5 +188,5 @@ export function scoreQualification(known: KnownQualification, turnCount: number,
   const band = bandForScore(score)
   const callPermission: CallPermission = known.wantsCall === true ? "yes" : known.wantsCall === false ? "no" : "unknown"
 
-  return { score, status: band.status, callPermission }
+  return { score, status: band.status, callPermission, factors }
 }

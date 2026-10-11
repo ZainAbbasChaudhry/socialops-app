@@ -6,7 +6,7 @@ import type { LeadIntentStatus, LeadScoreFactors } from "@/types"
  * reading the full WhatsApp thread); nothing downstream cares how the score
  * was produced, only that it's 0–100.
  */
-const WEIGHTS: Record<keyof LeadScoreFactors, number> = {
+export const SCORE_FACTOR_WEIGHTS: Record<keyof LeadScoreFactors, number> = {
   buyingIntent: 0.22,
   budget: 0.16,
   urgency: 0.14,
@@ -18,8 +18,8 @@ const WEIGHTS: Record<keyof LeadScoreFactors, number> = {
 }
 
 export function computeLeadScore(factors: LeadScoreFactors): number {
-  const weighted = (Object.keys(WEIGHTS) as (keyof LeadScoreFactors)[]).reduce(
-    (total, key) => total + factors[key] * WEIGHTS[key],
+  const weighted = (Object.keys(SCORE_FACTOR_WEIGHTS) as (keyof LeadScoreFactors)[]).reduce(
+    (total, key) => total + factors[key] * SCORE_FACTOR_WEIGHTS[key],
     0
   )
   return Math.max(0, Math.min(100, Math.round(weighted)))

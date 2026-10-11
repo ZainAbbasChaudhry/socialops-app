@@ -50,6 +50,7 @@ export function leadRowToLead(row: LeadRow): Lead {
     lastInteractionAt: row.lastInteractionAt.toISOString(),
     notes: row.notes,
     tags: row.tags,
+    scoreFactors: (row.scoreFactors as Lead["scoreFactors"]) ?? undefined,
   }
 }
 
